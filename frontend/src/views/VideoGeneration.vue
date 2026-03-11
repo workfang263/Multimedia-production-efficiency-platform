@@ -262,7 +262,7 @@
                                                 preload="metadata" 
                                                 style="display: none;"
                                             >
-                                                <source :src="'/assets/music/' + music.filename" type="audio/mpeg">
+                                                <source :src="'/assets/music/' + music.filename" :type="getAudioMimeType(music.filename)">
                                             </audio>
                                             
                                             <!-- 播放/暂停按钮 -->
@@ -365,7 +365,19 @@ const commonMusics = ref([
   { id: 'ski01', name: '滑雪歌曲01', group: '滑雪系列', filename: 'ski01.MP3' },
   { id: 'ski02', name: '滑雪歌曲02', group: '滑雪系列', filename: 'ski02.MP3' },
   { id: 'ski03', name: '滑雪歌曲03', group: '滑雪系列', filename: 'ski03.MP3' },
+  // 美国250周年系列（3个，文件需放在 frontend/public/assets/music/ 并命名为下方 filename）
+  { id: 'usa250_1', name: '美国250周年1', group: '美国250周年系列', filename: 'usa250_1.m4a' },
+  { id: 'usa250_2', name: '美国250周年2', group: '美国250周年系列', filename: 'usa250_2.m4a' },
+  { id: 'usa250_3', name: '美国250周年3', group: '美国250周年系列', filename: 'usa250_3.mp3' },
 ])
+
+// 根据文件名返回 audio 的 MIME type（.m4a 用 audio/mp4，其余默认 audio/mpeg）
+function getAudioMimeType(filename) {
+  if (!filename) return 'audio/mpeg'
+  const ext = filename.split('.').pop()?.toLowerCase()
+  if (ext === 'm4a') return 'audio/mp4'
+  return 'audio/mpeg'
+}
 
 // 计算属性：按分组组织音乐（可选，用于未来分组显示功能）
 // 当 commonMusics 数据变化时，会自动重新计算

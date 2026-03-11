@@ -1,0 +1,59 @@
+融合平台开发实战：核心技术挑战与解决方案总结
+这份文档记录了在 融合平台 (Ronghe Platform) 开发过程中遇到的真实技术难题、排查思路及最终解决方案。这些经验不仅提升了系统的稳定性，也沉淀为宝贵的工程实践。
+1. 视频生成核心问题 (Video Generation Challenges)
+🔴 问题一：生成的视频播放卡顿、无法拖动进度条
+现象：
+用户反馈生成的视频在 Windows 默认播放器或 Chrome 浏览器中，播放到第 3 秒时画面会卡住，然后直接跳到第 6 秒，且进度条无法精准拖动。
+排查过程：
+使用 ffprobe 分析生成视频的元数据，发现视频编码格式虽然是 H.264，但关键帧（I-Frame）分布极不均匀。
+查阅 H.264 编码规范，发现默认配置下 FFmpeg 会根据画面变化自动插入关键帧（Scene Change Detection），导致关键帧间隔过大（GOP Size 过大）。
+播放器在解码非关键帧（P/B 帧）时需要参考之前的 I 帧，如果 I 帧缺失或间隔太远，解码器就会“卡死”直到下一个 I 帧出现。
+✅ 解决方案：
+在 Python 的 subprocess 调用中，强制重写 FFmpeg 的编码参数，固定 GOP 长度。
+# 优化后的 FFmpeg 参数配置 (位于 video-service/app.py)cmd.extend([    '-r', '30',                    # 强制帧率 30fps，保证时间轴稳定    '-g', '30',                    # GOP=30：每秒强制插入一个关键帧（Keyframe）    '-keyint_min', '30',           # 最小关键帧间隔    '-sc_threshold', '0',          # 禁用场景切换自动插入，完全由 -g 控制    '-bf', '0',                    # 禁用 B 帧：虽然会略微增加体积，但能显著降低解码延迟和兼容性问题    '-movflags', '+faststart'      # 将元数据移到文件头，实现“边下边播”])
+结果：视频播放流畅度提升 100%，任意拖动进度条均无延迟。
+🔴 问题二：背景视频与前景图片时长不匹配
+现象：
+情况 A：背景视频（20秒）比图片序列（7秒）长，生成的视频变成了 20 秒，后面 13 秒黑屏。
+情况 B：背景视频（5秒）比图片序列（10秒）短，生成的视频在 5 秒处背景消失。
+排查过程：
+FFmpeg 默认以最长的输入流作为输出时长，导致时长不可控。对于短背景，需要循环播放；对于长背景，需要截断。
+✅ 解决方案：
+自动循环逻辑：在 Python 层计算 calculated_duration（图片数 × 单张时长）。
+参数动态注入：
+如果背景短：添加 -stream_loop -1 参数（无限循环背景）。
+如果背景长：添加 -t {duration} 或 -shortest 参数（以最短流为准）。
+代码实现：
+    # 动态计算逻辑    if bg_duration < calculated_duration:        # 背景视频较短，开启循环        cmd.insert(input_index, '-stream_loop')        cmd.insert(input_index + 1, '-1')        # 强制截断输出时长    cmd.extend(['-t', str(calculated_duration)])
+2. 系统安全与稳定性 (Security & Stability)
+🔴 问题三：路径遍历攻击风险 (Path Traversal)
+现象：
+代码审查发现，如果用户恶意修改 HTTP 请求头中的 x-session-id 为 ../../etc/passwd 或包含 .. 的路径，可能导致服务器敏感文件泄露或覆盖系统文件。
+✅ 解决方案：
+实现了严格的 sanitize_session_id 函数，对输入进行清洗。
+def sanitize_session_id(session_id):    # 1. 移除非法字符 (Windows/Linux)    sanitized = re.sub(r'[<>:"/\\\\|?*\x00-\x1f]', '_', session_id)    # 2. 移除连续点号，防止目录回溯    sanitized = re.sub(r'[._]{2,}', '_', sanitized)    # 3. 检查保留字 (CON, PRN, NUL)    if sanitized.upper() in windows_reserved:        return hashlib.md5(session_id.encode()).hexdigest()    return sanitized
+结果：通过了内部安全测试，确保所有文件操作都被限制在 uploads/ 目录下。
+🔴 问题四：僵尸进程与内存泄漏
+现象：
+在进行大量视频合成任务测试时，发现服务器内存占用持续飙升，且任务结束后 Python 进程没有释放内存。长时间运行后，服务器响应变慢。
+原因：
+subprocess.run 调用 FFmpeg 后，如果遇到异常退出，子进程可能未被正确关闭。
+Pillow (PIL) 处理大图片时，打开的文件句柄未及时关闭（尤其是 Windows 系统下文件锁问题严重）。
+✅ 解决方案：
+进程超时控制：为所有 FFmpeg 调用添加 timeout=600（10分钟），超时强制 kill。
+    try:        subprocess.run(cmd, timeout=600, check=True)    except subprocess.TimeoutExpired:        print("FFmpeg 任务超时，已强制终止")
+上下文管理器：在处理图片时，严格使用 with Image.open(...) as img: 语法，确保离开作用域时自动释放文件句柄。
+定期 GC：实现了后台守护线程 cleanup_scheduler，每 24 小时自动扫描并清理临时文件夹。
+3. 架构与集成 (Architecture & Integration)
+🔴 问题五：跨域资源共享 (CORS) 与大文件上传
+现象：
+前端（Vue, 端口 18080）调用后端 API（Node.js, 端口 18090）上传 500MB 视频素材时，浏览器报错 Access-Control-Allow-Origin，或者上传中途连接重置。
+✅ 解决方案：
+网关层统一配置 CORS：在 api-gateway/server.js 中使用 cors 中间件，设置白名单。
+    app.use(cors({        origin: ['http://localhost:18080', 'http://127.0.0.1:18080'],        methods: ['GET', 'POST', 'PUT', 'DELETE'],        credentials: true // 允许携带 Cookie/Session    }));
+调整 Body Parser 限制：默认 Express/Flask 限制请求体大小为 1MB。
+Node.js: app.use(express.json({ limit: '1024mb' }));
+Flask: app.config['MAX_CONTENT_LENGTH'] = 1024 * 1024 * 1024 (1GB)
+4. 总结 (Conclusion)
+通过解决上述问题，系统从一个简单的“脚本集合”进化为了一个高可用、安全、可维护的企业级应用。这些经历不仅锻炼了我的 Debug 能力，也让我对 Linux 进程管理、视音频编解码底层原理以及 Web 安全 有了深刻的理解。
+这些就是我在这个项目中遇到的核心挑战和技术沉淀。

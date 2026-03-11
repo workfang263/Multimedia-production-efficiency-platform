@@ -1731,11 +1731,8 @@ const handleGenerateAndUpload = async () => {
     
     console.log('  - 开始上传到后端...')
     
-    // 调用后端接口
+    // 调用后端接口（不手动设置 Content-Type，让浏览器自动带 boundary，否则后端收不到文件）
     const uploadResponse = await axios.post('/api/upload-to-imgfi', formData, {
-      headers: {
-        'Content-Type': 'multipart/form-data'
-      },
       timeout: 35000
     })
     
@@ -1801,9 +1798,11 @@ const handleGenerateAndUpload = async () => {
         errorDescription = '无法连接到服务器，请检查网络连接。图片已生成，可以使用"上传到外链"按钮重新上传'
       } else if (error.response) {
         const data = error.response.data
-        errorDescription = data?.error || data?.message || `上传失败 (HTTP ${error.response.status})。图片已生成，可以使用"上传到外链"按钮重新上传`
+        const rawDesc = data?.error ?? data?.message
+        errorDescription = (typeof rawDesc === 'string' ? rawDesc : rawDesc?.message ?? '') || `上传失败 (HTTP ${error.response.status})。图片已生成，可以使用"上传到外链"按钮重新上传`
         
-        if (error.response.status === 401 || errorDescription.includes('API Key')) {
+        const descStr = String(errorDescription ?? '')
+        if (error.response.status === 401 || descStr.includes('API Key')) {
           errorDescription = 'API Key 无效或已过期，请联系管理员检查配置。图片已生成，可以使用"上传到外链"按钮重新上传'
         }
       } else if (error.message) {

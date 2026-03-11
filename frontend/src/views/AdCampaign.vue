@@ -551,7 +551,7 @@ const countries = ref([
   { code: 'BR', name: '巴西' }, { code: 'CL', name: '智利' }, { code: 'CW', name: '库拉索' },
   { code: 'CY', name: '塞浦路斯' }, { code: 'CZ', name: '捷克共和国' }, { code: 'GG', name: '根西岛' },
   { code: 'JP', name: '日本' }, { code: 'UA', name: '乌克兰' }, { code: 'SY', name: '叙利亚' },
-  { code: 'TR', name: '土耳其' }
+  { code: 'TR', name: '土耳其' }, { code: 'SG', name: '新加坡' }
 ])
 
 // ========== 实时监听文本框变化（阶段一） ==========
