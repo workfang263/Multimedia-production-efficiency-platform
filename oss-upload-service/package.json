@@ -1,0 +1,18 @@
+{
+  "name": "oss-upload-service",
+  "version": "1.0.0",
+  "description": "局域网 OSS 图床服务，提供 POST /api/upload 与 POST /api/upload-by-url",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "ali-oss": "^6.20.0",
+    "axios": "^1.6.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "multer": "^2.0.2"
+  }
+}
