@@ -118,7 +118,7 @@ echo.
 echo 下一步：
 echo   1. 复制 env.example 为 .env 文件
 echo   2. 编辑 .env 文件，配置必要的参数
-echo   3. 修改 video-service\app.py 中的 FFmpeg 路径
+echo   3. 确保已安装 FFmpeg（PATH 可执行）；VideoGenerator 默认在 video-service\vendor\ffmpeg
 echo   4. 运行 start_demo.bat 启动服务
 echo.
 pause

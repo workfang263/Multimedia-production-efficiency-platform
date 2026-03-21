@@ -5,10 +5,13 @@
 ## 启动方式
 
 ```bash
-cd D:\projects\ronghe-platform\video-service
-$env:FFMPEG_PATH='C:\ffmpeg\ffmpeg-8.0-essentials_build\bin\ffmpeg.exe'
+cd D:\ronghe-platform\video-service
+# FFmpeg 需在 PATH 中，或使用 VideoGenerator 内建路径探测；可选：
+# $env:FFMPEG_PATH='C:\ffmpeg\ffmpeg-8.0-essentials_build\bin\ffmpeg.exe'
 python -u -B app.py
 ```
+
+`VideoGenerator` 默认从 **`vendor/ffmpeg/video_generator.py`** 加载；自定义目录可设置环境变量 **`VIDEO_GENERATOR_DIR`**。
 
 ## 端口配置
 

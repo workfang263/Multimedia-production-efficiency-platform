@@ -87,23 +87,11 @@ copy env.example .env
 - API 密钥（如果需要）
 - 其他配置
 
-### 4. 修改硬编码路径
+### 4. VideoGenerator 与 FFmpeg 路径
 
-#### 修改 `video-service/app.py` 第 27 行：
-
-**原代码：**
-```python
-ffmpeg_dir = os.path.join(r'D:\projects\ffmpeg\ffmpeg')
-```
-
-**改为你笔记本上的路径：**
-```python
-# 方式一：如果 FFmpeg 在系统 PATH 中，可以注释掉这行
-# ffmpeg_dir = os.path.join(r'D:\projects\ffmpeg\ffmpeg')
-
-# 方式二：改为你笔记本上的路径
-ffmpeg_dir = os.path.join(r'C:\ffmpeg\ffmpeg')  # 根据实际情况修改
-```
+- **`video_generator.py`** 已随仓库放在 **`video-service/vendor/ffmpeg/`**，一般**无需再改 `app.py`**。
+- 若需使用本机另一份 `video_generator.py`，可设置环境变量 **`VIDEO_GENERATOR_DIR`** 指向包含该文件的目录。
+- **FFmpeg 可执行文件**需安装并加入系统 PATH（或按 `video-service/README.md` 使用 `FFMPEG_PATH` 等说明）。
 
 #### 修改启动脚本中的路径（如果有硬编码）：
 
@@ -180,7 +168,7 @@ start_demo.bat
 - [ ] 安装 Node.js、Python、FFmpeg
 - [ ] 运行 `npm install` 安装依赖
 - [ ] 创建 `.env` 文件
-- [ ] 修改 `video-service/app.py` 中的 FFmpeg 路径
+- [ ] 确认 `video-service/vendor/ffmpeg/video_generator.py` 存在（或使用 `VIDEO_GENERATOR_DIR`）
 - [ ] 运行 `start_demo.bat` 测试
 
 ---

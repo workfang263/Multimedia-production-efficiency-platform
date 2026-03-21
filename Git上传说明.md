@@ -117,15 +117,10 @@ copy env.example .env
 - `SECRET_KEY` - 应用密钥（可以随机生成）
 - `JWT_SECRET` - JWT 密钥（可以随机生成）
 
-#### 修改硬编码路径（必须）
-**`video-service/app.py` 第 27 行：**
-```python
-# 原代码（你的路径）
-ffmpeg_dir = os.path.join(r'D:\projects\ffmpeg\ffmpeg')
-
-# 需要改为别人的 FFmpeg 路径
-ffmpeg_dir = os.path.join(r'C:\ffmpeg\ffmpeg')  # 根据实际情况修改
-```
+#### VideoGenerator 路径（通常不必改）
+- 核心模块 **`video_generator.py`** 位于 **`video-service/vendor/ffmpeg/`**，已随仓库提供。
+- 仅在自定义位置时设置环境变量 **`VIDEO_GENERATOR_DIR`**（指向包含 `video_generator.py` 的目录）。
+- **FFmpeg** 仍需在系统中安装并可用（PATH）。
 
 ### 3. 安装依赖（必须）
 ```bash
@@ -186,7 +181,7 @@ start_demo.bat
 2. 安装 Node.js、Python、FFmpeg
 3. 运行 `npm install` 安装依赖
 4. 创建 `.env` 文件（从 `env.example` 复制）
-5. 修改 `video-service/app.py` 中的 FFmpeg 路径
+5. 确认 FFmpeg 已安装；如需自定义 VideoGenerator 目录则设置 `VIDEO_GENERATOR_DIR`
 6. 启动服务
 
 ---

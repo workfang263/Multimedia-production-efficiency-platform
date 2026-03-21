@@ -22,9 +22,28 @@ from werkzeug.utils import secure_filename
 import shutil
 from PIL import Image, ImageOps
 
-# 添加父目录到路径，以便导入video_generator模块
-# 融合平台视频服务需要从原始ffmpeg项目导入video_generator
-ffmpeg_dir = os.path.join(r'D:\projects\ffmpeg\ffmpeg')
+# 添加目录到路径，以便导入 video_generator（已随仓库放在 vendor/ffmpeg，也可用环境变量覆盖）
+def _resolve_video_generator_dir():
+    """
+    解析 VideoGenerator 所在目录，优先级：
+    1. 环境变量 VIDEO_GENERATOR_DIR（或 FFMPEG_VENDOR_DIR）
+    2. 本仓库内默认路径：video-service/vendor/ffmpeg（含 video_generator.py）
+    """
+    env_dir = os.environ.get("VIDEO_GENERATOR_DIR") or os.environ.get("FFMPEG_VENDOR_DIR")
+    if env_dir:
+        return os.path.abspath(env_dir.strip().strip('"'))
+    base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.abspath(os.path.join(base, "vendor", "ffmpeg"))
+
+
+ffmpeg_dir = _resolve_video_generator_dir()
+_vg_py = os.path.join(ffmpeg_dir, "video_generator.py")
+if not os.path.isfile(_vg_py):
+    raise ImportError(
+        f"未找到 video_generator.py：{_vg_py}\n"
+        f"请将外部工程中的 video_generator.py 放到上述目录，或设置环境变量 VIDEO_GENERATOR_DIR 指向包含该文件的目录。\n"
+        f"说明见：video-service/vendor/ffmpeg/README.md"
+    )
 sys.path.insert(0, ffmpeg_dir)
 from video_generator import VideoGenerator
 
