@@ -3,14 +3,14 @@
  * 融合平台 HTTP 冒烟：需在 Nginx + api-gateway（及依赖）已启动后执行。
  *
  * 用法：
- *   SMOKE_BASE_URL=http://127.0.0.1 node scripts/smoke-platform.mjs
- *   # 或测公网（本机可访问时）
- *   SMOKE_BASE_URL=http://你的IP node scripts/smoke-platform.mjs
+ *   SMOKE_BASE_URL=http://127.0.0.1:8081 node scripts/smoke-platform.mjs
+ *   # 或测公网（本机可访问公网 IP:8081 时）
+ *   SMOKE_BASE_URL=http://你的IP:8081 node scripts/smoke-platform.mjs
  *
  * 退出码：0 全部通过，1 有失败。
  */
 
-const base = (process.env.SMOKE_BASE_URL || 'http://127.0.0.1').replace(/\/$/, '')
+const base = (process.env.SMOKE_BASE_URL || 'http://127.0.0.1:8081').replace(/\/$/, '')
 
 function fail(msg) {
   console.error(`\x1b[31m✗\x1b[0m ${msg}`)
