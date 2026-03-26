@@ -1,0 +1,99 @@
+# 为何用 Compose：一条命令定义「数据库 + 多个应用 + 反向代理」的依赖与网络，避免手动记端口与启动顺序。
+# 服务间访问：用服务名（如 mysql、api-gateway）作主机名，这是 Docker 内置 DNS 提供的。
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: ronghe-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ronghe}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      # 等 MySQL 可接受连接后再启动依赖它的应用，避免启动瞬间连库失败
+      # $$ 在 Compose 里转义为 $，密码由容器内环境变量提供，避免特殊字符在 YAML 里被误解析
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
+
+  api-gateway:
+    build: ./api-gateway
+    container_name: ronghe-api-gateway
+    restart: unless-stopped
+    # 将项目根目录 .env 注入网关，避免仅依赖 Compose 插值时 CORS_EXTRA_ORIGINS 为空覆盖掉白名单
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      PORT: "18083"
+      # 容器内不能用 localhost 访问其它服务，必须用 Compose 服务名
+      VIDEO_GENERATION_URL: http://video-service:18091
+      # CORS_EXTRA_ORIGINS 由上方 env_file 的 .env 提供；勿在此处写空值，否则会覆盖 env_file
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:18080}
+      # 在宿主机创建 .env 后，可按需在网关代码中读取下列变量名（请与你的 ORM/配置对齐后取消注释）
+      # DB_HOST: mysql
+      # DB_PORT: "3306"
+      # DB_USER: root
+      # DB_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      # DB_NAME: ${MYSQL_DATABASE:-ronghe}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      video-service:
+        condition: service_started
+    expose:
+      - "18083"
+    volumes:
+      # 与 video-service 共享：拼图 stitch 需读取 fetch-image 写入的 /app/public/temp
+      - shared_gateway_temp:/app/public/temp
+
+  video-service:
+    build: ./video-service
+    container_name: ronghe-video-service
+    restart: unless-stopped
+    environment:
+      PORT: "18091"
+      # 与 api-gateway 的 public/temp 同卷，否则 stitch 在容器内找不到网关下载的图片
+      STITCH_TEMP_DIR: /app/public/temp
+    volumes:
+      - shared_gateway_temp:/app/public/temp
+    depends_on:
+      mysql:
+        condition: service_healthy
+    expose:
+      - "18091"
+
+  oss-upload-service:
+    build: ./oss-upload-service
+    container_name: ronghe-oss-upload
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+    depends_on:
+      mysql:
+        condition: service_healthy
+    expose:
+      - "3001"
+
+  nginx:
+    image: nginx:alpine
+    container_name: ronghe-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./frontend/dist:/usr/share/nginx/html:ro
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - api-gateway
+
+volumes:
+  mysql_data:
+  shared_gateway_temp:

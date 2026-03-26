@@ -6,6 +6,7 @@ const axios = require('axios');
 const FormData = require('form-data');
 const path = require('path');
 const fs = require('fs').promises;
+const fsSync = require('fs');
 const multer = require('multer');
 const XLSX = require('xlsx');
 const http = require('http');
@@ -1830,15 +1831,39 @@ app.use(helmet({
   frameguard: false, // 禁用 X-Frame-Options，使用 CSP 的 frameAncestors 代替
 }));
 app.use(compression());
+
+// 统一比较 Origin：浏览器可能发 http://IP 或 http://IP:80，需视为同一来源
+function normalizeOriginValue(o) {
+  if (!o || typeof o !== 'string') return '';
+  try {
+    return new URL(o).origin;
+  } catch {
+    return o.trim();
+  }
+}
+
 app.use(cors({
   origin: function (origin, callback) {
     // 允许的来源列表
     const allowedOrigins = [
       process.env.FRONTEND_URL || 'http://localhost:18080',
+      // Docker / 生产：经 Nginx 用默认 80 端口打开时，Origin 为 http://localhost（无 :18080），必须单独放行
+      'http://localhost',
+      'http://127.0.0.1',
       'http://192.168.0.51:5173',  // Shoplazza 系统
       'http://localhost:5173',     // Shoplazza 本地开发
       'http://192.168.0.51:18080', // 融合平台外部访问
     ];
+
+    // 部署到云服务器时：浏览器 Origin 为 http://公网IP 或域名，需在此显式放行（见 env.example 的 CORS_EXTRA_ORIGINS）
+    const extraOrigins = (process.env.CORS_EXTRA_ORIGINS || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const allowedNormalized = new Set([
+      ...allowedOrigins.map(normalizeOriginValue),
+      ...extraOrigins.map(normalizeOriginValue),
+    ]);
     
     try {
       // 允许无 origin 的请求（如 Postman、移动应用、同源请求等）
@@ -1846,14 +1871,16 @@ app.use(cors({
         return callback(null, true);
       }
       
-      // 检查是否在允许列表中
-      if (allowedOrigins.includes(origin)) {
+      const norm = normalizeOriginValue(origin);
+      // 检查是否在允许列表中（含 :80 / 默认端口归一化）
+      if (allowedNormalized.has(norm)) {
         return callback(null, true);
       }
       
       // 新增：允许所有内网 IP (192.168.x.x) 访问
-      // 匹配格式：http://192.168.x.x:端口号
-      const isLocalNetwork = /^http:\/\/192\.168\.\d{1,3}\.\d{1,3}:\d+$/.test(origin);
+      // 匹配格式：http://192.168.x.x:端口号（或归一化后的 origin）
+      const isLocalNetwork = /^http:\/\/192\.168\.\d{1,3}\.\d{1,3}(:\d+)?$/.test(origin) ||
+        /^http:\/\/192\.168\.\d{1,3}\.\d{1,3}(:\d+)?$/.test(norm);
       if (isLocalNetwork) {
         console.log(`✅ 允许内网访问: ${origin}`);
         return callback(null, true);
@@ -3834,9 +3861,17 @@ app.get('/api/stats', async (req, res) => {
   }
 });
 
-// 前端路由（SPA支持）
+// 前端路由（SPA 兜底）：Docker 网关镜像通常不含 ../frontend/dist，sendFile 失败会进全局 500
+// 未命中 /temp、/uploads 下具体文件时勿把请求当 SPA，避免 ENOENT
+const spaIndexPath = path.join(__dirname, '../frontend/dist/index.html');
 app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
+  if (req.path.startsWith('/temp/') || req.path.startsWith('/uploads/')) {
+    return res.status(404).type('text/plain').send('Not found');
+  }
+  if (!fsSync.existsSync(spaIndexPath)) {
+    return res.status(404).json({ error: 'Not found', message: '网关未内置前端 dist，请使用 Nginx 提供静态页' });
+  }
+  res.sendFile(spaIndexPath);
 });
 
 // 错误处理中间件

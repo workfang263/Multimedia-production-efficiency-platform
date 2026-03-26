@@ -56,6 +56,12 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 UPLOAD_FOLDER = os.path.join(PROJECT_ROOT, 'uploads')
 OUTPUT_FOLDER = os.path.join(PROJECT_ROOT, 'output')
 
+# 拼图素材/输出目录：须与 api-gateway 的 public/temp 为同一物理目录。
+# 本地 monorepo：repo/api-gateway/public/temp
+# Docker：通过 STITCH_TEMP_DIR + Compose 共享卷，与网关容器 /app/public/temp 对齐（否则 video-service 读不到网关下载的图片）
+_stitch_env = (os.environ.get('STITCH_TEMP_DIR') or os.environ.get('API_GATEWAY_PUBLIC_TEMP') or '').strip()
+STITCH_TEMP_BASE = os.path.abspath(_stitch_env) if _stitch_env else os.path.join(PROJECT_ROOT, 'api-gateway', 'public', 'temp')
+
 # 清理Session ID，使其成为安全的文件名
 def sanitize_session_id(session_id):
     """
@@ -1375,11 +1381,8 @@ def stitch_images():
         session_id = get_user_session_id()
         print(f"[Stitch] 用户 Session ID: {session_id}", flush=True)
         
-        # 构建完整的图片路径
-        # 图片存储在 api-gateway/public/temp/{sessionId}/ 目录
-        # PROJECT_ROOT 是 video-service 的父目录（ronghe-platform）
-        # 所以 api-gateway/public/temp/{sessionId}/ 的路径是 PROJECT_ROOT/api-gateway/public/temp/{sessionId}/
-        api_gateway_temp_dir = os.path.join(PROJECT_ROOT, 'api-gateway', 'public', 'temp', session_id)
+        # 构建完整的图片路径（与 fetch-image 写入目录一致，见 STITCH_TEMP_BASE）
+        api_gateway_temp_dir = os.path.join(STITCH_TEMP_BASE, session_id)
         
         # 解析图片路径（支持两种格式）
         # 格式1：/temp/{sessionId}/filename.jpg（新格式，包含Session ID）
@@ -1426,7 +1429,7 @@ def stitch_images():
                 filename = parts[-1]  # 最后一部分是文件名
                 
                 # 使用路径中的 Session ID 构建完整路径
-                file_session_dir = os.path.join(PROJECT_ROOT, 'api-gateway', 'public', 'temp', path_session_id)
+                file_session_dir = os.path.join(STITCH_TEMP_BASE, path_session_id)
                 return os.path.join(file_session_dir, filename)
             else:
                 # 旧格式：filename.jpg（兼容性处理）
@@ -1497,7 +1500,7 @@ def stitch_images():
             # 旧格式：/temp/filename.jpg，使用当前 Session ID
             output_session_id = session_id
         
-        output_temp_dir = os.path.join(PROJECT_ROOT, 'api-gateway', 'public', 'temp', output_session_id)
+        output_temp_dir = os.path.join(STITCH_TEMP_BASE, output_session_id)
         # 确保输出目录存在
         os.makedirs(output_temp_dir, exist_ok=True)
         
