@@ -4,7 +4,8 @@
 services:
   mysql:
     image: mysql:8.0
-    container_name: ronghe-mysql
+    # 与运维文档、docker exec 口径统一为容器名 mysql（数据仍在卷 mysql_data，非整库迁移）
+    container_name: mysql
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
@@ -94,7 +95,46 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - api-gateway
+    # 默认网络保留与 api-gateway 等同栈服务互联；app-network 供后续 oauth2-proxy、fb-ad-nginx 等同名 DNS
+    networks:
+      - default
+      - app-network
+
+  # 认证层骨架：先接入编排与网络，真实密钥在后续里程碑补齐后再启用 profile=auth。
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+    container_name: oauth2-proxy
+    restart: unless-stopped
+    profiles: ["auth"]
+    command:
+      - --http-address=0.0.0.0:4180
+      - --reverse-proxy=true
+      - --provider=oidc
+      - --oidc-issuer-url=${DINGTALK_OIDC_ISSUER_URL:-https://placeholder.invalid}
+      - --redirect-url=${OAUTH2_PROXY_REDIRECT_URL:-http://ad_tools.thinkpro.top/oauth2/callback}
+      - --upstream=file:///dev/null
+      - --email-domain=*
+      - --cookie-domain=.thinkpro.top
+      - --cookie-secure=false
+      - --set-xauthrequest=true
+      - --pass-user-headers=true
+      - --pass-authorization-header=true
+      - --skip-provider-button=true
+    environment:
+      # 暂无钉钉密钥时保留占位，避免误启动后把入口锁死；启用前务必替换为真实值。
+      OAUTH2_PROXY_CLIENT_ID: ${DINGTALK_APP_KEY:-__TO_BE_FILLED__}
+      OAUTH2_PROXY_CLIENT_SECRET: ${DINGTALK_APP_SECRET:-__TO_BE_FILLED__}
+      OAUTH2_PROXY_COOKIE_SECRET: ${OAUTH2_PROXY_COOKIE_SECRET:-__TO_BE_FILLED__}
+    expose:
+      - "4180"
+    networks:
+      - app-network
 
 volumes:
   mysql_data:
   shared_gateway_temp:
+
+# 外部预创建：docker network create app-network（Compose 只声明接入，避免隐式重名网络）
+networks:
+  app-network:
+    external: true
