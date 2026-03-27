@@ -4,6 +4,8 @@ import { resolve } from 'path'
 
 export default defineConfig({
   plugins: [vue()],
+  // 部署在主域名子路径 /ronghe/ 下，构建产物资源前缀必须与入口路径一致。
+  base: '/ronghe/',
   test: {
     globals: true,
     environment: 'happy-dom',
