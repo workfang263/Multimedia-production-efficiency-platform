@@ -98,8 +98,6 @@ api-gateway/image-links.json
 # 依赖/vendor 的手工备份目录（云端常见，体积大、不可复现、与 Git 版本无关）
 # 勿 git add：会膨胀仓库、泄露路径习惯，且应用依赖应以 requirements/package 为准重装
 video-service/vendor.bak.server/
-**/vendor.bak.*/
-
-# 压缩数据库转储（多为整库备份，含业务数据，不应进仓库）
+**/vendor.bak.*/# 压缩数据库转储（多为整库备份，含业务数据，不应进仓库）
 # 未忽略 *.sql：避免日后若有 migrations/*.sql 等迁移脚本无法被跟踪
 *.sql.gz

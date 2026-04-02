@@ -201,8 +201,8 @@
             <el-button
               type="primary"
               size="small"
-              :disabled="!isCanvasComplete || generating || uploadingToImgfi"
-              :loading="generating || uploadingToImgfi"
+              :disabled="!isCanvasComplete || generating || uploadingExternal"
+              :loading="generating || uploadingExternal"
               @click="handleGenerateAndUpload"
             >
               {{ getGenerateButtonText() }}
@@ -380,19 +380,19 @@
               <el-button
                 type="primary"
                 size="small"
-                :loading="uploadingToImgfi"
-                :disabled="!resultImageUrl || uploadingToImgfi"
-                @click="handleUploadToImgfi"
+                :loading="uploadingExternal"
+                :disabled="!resultImageUrl || uploadingExternal"
+                @click="handleUploadToExternal"
                 style="width: 100%; margin-bottom: 10px;"
               >
-                {{ uploadingToImgfi ? '上传中...' : '上传到外链' }}
+                {{ uploadingExternal ? '上传中...' : '上传到外链' }}
               </el-button>
               
               <!-- 外链 URL 显示（上传成功后显示） -->
-              <div v-if="imgfiUrl" class="imgfi-url-section">
-                <div class="imgfi-url-label">外链地址：</div>
+              <div v-if="externalImageUrl" class="external-url-section">
+                <div class="external-url-label">外链地址：</div>
                 <el-input
-                  v-model="imgfiUrl"
+                  v-model="externalImageUrl"
                   readonly
                   size="small"
                   class="result-url-input"
@@ -400,8 +400,8 @@
                   <template #append>
                     <el-button 
                       size="small"
-                      @click="handleCopyImgfiUrl" 
-                      :disabled="!imgfiUrl"
+                      @click="handleCopyExternalUrl" 
+                      :disabled="!externalImageUrl"
                     >
                       复制外链
                     </el-button>
@@ -449,8 +449,8 @@ const resultImageUrl = ref('') // 生成的图片 URL
 const resultImageSize = ref({ width: 0, height: 0 }) // 生成的图片尺寸
 
 // 外链上传状态
-const uploadingToImgfi = ref(false) // 是否正在上传到 imgfi.com
-const imgfiUrl = ref('') // imgfi.com 返回的外链 URL
+const uploadingExternal = ref(false) // 是否正在上传到图床外链
+const externalImageUrl = ref('') // 图床返回的外链 URL
 
 // 分割线拖动状态管理（使用比例系统）
 const dragging = ref({
@@ -1613,7 +1613,7 @@ const handleGenerate = async () => {
 const getGenerateButtonText = () => {
   if (generating.value) {
     return '生成中...'
-  } else if (uploadingToImgfi.value) {
+  } else if (uploadingExternal.value) {
     return '上传中...'
   } else {
     return '生成并上传外链'
@@ -1646,14 +1646,14 @@ const handleGenerateAndUpload = async () => {
   }
   
   // 防止重复提交
-  if (generating.value || uploadingToImgfi.value) {
+  if (generating.value || uploadingExternal.value) {
     ElMessage.warning('正在处理中，请稍候...')
     return
   }
   
   generating.value = true
   resultImageUrl.value = '' // 清空之前的结果
-  imgfiUrl.value = '' // 清空之前的外链 URL
+  externalImageUrl.value = '' // 清空之前的外链 URL
   
   try {
     // ========== 第一步：生成拼接图片 ==========
@@ -1697,9 +1697,9 @@ const handleGenerateAndUpload = async () => {
     
     // ========== 第二步：自动上传到外链 ==========
     generating.value = false // 生成完成，切换到上传状态
-    uploadingToImgfi.value = true
+    uploadingExternal.value = true
     
-    console.log('📤 [生成并上传] 第二步：开始上传图片到 imgfi.com')
+    console.log('📤 [生成并上传] 第二步：开始上传图片到图床外链')
     console.log('  - 图片 URL:', resultImageUrl.value)
     
     // 从 resultImageUrl 获取图片数据
@@ -1719,7 +1719,7 @@ const handleGenerateAndUpload = async () => {
     const MAX_SIZE = 10 * 1024 * 1024
     if (fileSize > MAX_SIZE) {
       ElMessage.error(`图片过大（${fileSizeMB} MB），请上传小于 10MB 的图片`)
-      uploadingToImgfi.value = false
+      uploadingExternal.value = false
       return
     }
     
@@ -1727,18 +1727,20 @@ const handleGenerateAndUpload = async () => {
     const formData = new FormData()
     const fileName = `stitch_${Date.now()}.${resultImageUrl.value.split('.').pop() || 'jpg'}`
     const imageFile = new File([imageBlob], fileName, { type: imageBlob.type })
-    formData.append('image', imageFile)
+    // 统一图床上传协议（M2.5）：字段名统一为 file
+    formData.append('file', imageFile)
     
     console.log('  - 开始上传到后端...')
     
     // 调用后端接口（不手动设置 Content-Type，让浏览器自动带 boundary，否则后端收不到文件）
-    const uploadResponse = await axios.post('/api/upload-to-imgfi', formData, {
+    // 统一图床上传入口（M2.5）：前端只调用网关，不直连具体图床实现
+    const uploadResponse = await axios.post('/api/upload-image', formData, {
       timeout: 35000
     })
     
     // 处理上传响应
     if (uploadResponse.data && uploadResponse.data.success && uploadResponse.data.url) {
-      imgfiUrl.value = uploadResponse.data.url
+      externalImageUrl.value = uploadResponse.data.url
       console.log('✅ [生成并上传] 第二步完成：上传成功:', uploadResponse.data.url)
       ElMessage.success('图片已生成并上传到外链！')
       
@@ -1814,7 +1816,7 @@ const handleGenerateAndUpload = async () => {
     
   } finally {
     generating.value = false
-    uploadingToImgfi.value = false
+    uploadingExternal.value = false
   }
 }
 
@@ -1859,14 +1861,14 @@ const handleResultImageLoad = (event) => {
 }
 
 /**
- * 方法：上传图片到 imgfi.com 图床
+ * 方法：上传图片到统一图床外链
  * 
  * 实现思路：
  * 1. 检查是否有生成的图片
  * 2. 从 resultImageUrl 获取图片数据（转换为 Blob）
  * 3. 检查文件大小（10MB 限制）
  * 4. 创建 FormData，添加图片
- * 5. 调用后端接口 /api/upload-to-imgfi
+ * 5. 调用后端接口 /api/upload-image
  * 6. 显示上传结果
  * 
  * 技术要点：
@@ -1875,7 +1877,7 @@ const handleResultImageLoad = (event) => {
  * - FormData: 用于创建 multipart/form-data 请求体
  * - 文件大小检查: 上传前验证，避免浪费带宽
  */
-const handleUploadToImgfi = async () => {
+const handleUploadToExternal = async () => {
   // 1. 检查是否有生成的图片
   if (!resultImageUrl.value) {
     ElMessage.warning('请先生成拼接图片')
@@ -1883,15 +1885,15 @@ const handleUploadToImgfi = async () => {
   }
 
   // 防止重复提交
-  if (uploadingToImgfi.value) {
+  if (uploadingExternal.value) {
     return
   }
 
-  uploadingToImgfi.value = true
-  imgfiUrl.value = '' // 清空之前的外链 URL
+  uploadingExternal.value = true
+  externalImageUrl.value = '' // 清空之前的外链 URL
 
   try {
-    console.log('📤 [Imgfi] 开始上传图片到 imgfi.com')
+    console.log('📤 [ExternalUpload] 开始上传图片到图床外链')
     console.log('  - 图片 URL:', resultImageUrl.value)
 
     // 2. 从 resultImageUrl 获取图片数据
@@ -1927,13 +1929,14 @@ const handleUploadToImgfi = async () => {
     const fileName = `stitch_${Date.now()}.${resultImageUrl.value.split('.').pop() || 'jpg'}`
     const imageFile = new File([imageBlob], fileName, { type: imageBlob.type })
     
-    // 添加到 FormData，字段名为 'image'（后端接口要求的字段名）
-    formData.append('image', imageFile)
+    // 统一图床上传协议（M2.5）：字段名统一为 file
+    formData.append('file', imageFile)
 
     console.log('  - 开始上传到后端...')
 
     // 5. 调用后端接口
-    const response = await axios.post('/api/upload-to-imgfi', formData, {
+    // 统一图床上传入口（M2.5）：前端只调用网关，不直连具体图床实现
+    const response = await axios.post('/api/upload-image', formData, {
       headers: {
         'Content-Type': 'multipart/form-data' // 必须设置，让 axios 自动处理 boundary
       },
@@ -1942,8 +1945,8 @@ const handleUploadToImgfi = async () => {
 
     // 6. 处理响应
     if (response.data && response.data.success && response.data.url) {
-      imgfiUrl.value = response.data.url
-      console.log('✅ [Imgfi] 上传成功:', response.data.url)
+      externalImageUrl.value = response.data.url
+      console.log('✅ [ExternalUpload] 上传成功:', response.data.url)
       ElMessage.success('图片已上传到外链！')
       
       // 7. 同步外链到广告投放页面（新增功能）
@@ -1953,7 +1956,7 @@ const handleUploadToImgfi = async () => {
     }
 
   } catch (error) {
-    console.error('❌ [Imgfi] 上传失败:', error)
+    console.error('❌ [ExternalUpload] 上传失败:', error)
     
     // ✅ 增强错误日志：输出完整的错误信息
     console.error('  - 错误消息:', error.message)
@@ -1976,17 +1979,13 @@ const handleUploadToImgfi = async () => {
       // ✅ 显示后端返回的具体错误信息
       errorMessage = data?.error || data?.message || `上传失败 (HTTP ${error.response.status})`
       
-      // 如果是 API Key 相关错误，给出更明确的提示
-      if (error.response.status === 401 || errorMessage.includes('API Key')) {
-        errorMessage = 'API Key 无效或已过期，请联系管理员检查配置'
-      }
     } else if (error.message) {
       errorMessage = error.message
     }
 
     ElMessage.error(errorMessage)
   } finally {
-    uploadingToImgfi.value = false
+    uploadingExternal.value = false
   }
 }
 
@@ -2074,24 +2073,24 @@ const syncExternalLinkToAdCampaign = async (externalLink) => {
  * 使用 navigator.clipboard API（现代浏览器支持）
  * 如果浏览器不支持，降级到传统方法
  */
-const handleCopyImgfiUrl = async () => {
-  if (!imgfiUrl.value) {
+const handleCopyExternalUrl = async () => {
+  if (!externalImageUrl.value) {
     ElMessage.warning('没有外链地址可复制')
     return
   }
 
   try {
     // 使用现代 Clipboard API
-    await navigator.clipboard.writeText(imgfiUrl.value)
+    await navigator.clipboard.writeText(externalImageUrl.value)
     ElMessage.success('外链地址已复制到剪贴板')
-    console.log('✅ [Imgfi] 外链地址已复制:', imgfiUrl.value)
+    console.log('✅ [ExternalUpload] 外链地址已复制:', externalImageUrl.value)
   } catch (error) {
-    console.error('❌ [Imgfi] 复制失败:', error)
+    console.error('❌ [ExternalUpload] 复制失败:', error)
     
     // 降级方案：使用传统方法
     try {
       const textArea = document.createElement('textarea')
-      textArea.value = imgfiUrl.value
+      textArea.value = externalImageUrl.value
       textArea.style.position = 'fixed'
       textArea.style.opacity = '0'
       document.body.appendChild(textArea)
@@ -2690,13 +2689,13 @@ onUnmounted(() => {
 }
 
 /* 外链上传相关样式 */
-.imgfi-url-section {
+.external-url-section {
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px solid #e4e7ed;
 }
 
-.imgfi-url-label {
+.external-url-label {
   font-size: 0.75rem;
   color: #606266;
   margin-bottom: 6px;
