@@ -71,8 +71,8 @@ VIDEO_GENERATION_URL=http://localhost:19000
 # 环境模式
 NODE_ENV=development
 
-# 如果使用图片处理功能，需要配置 Imgfi API Key
-# IMGFI_API_KEY=your-api-key-here
+# 如果需要覆盖默认图床下游地址，可显式配置
+# TUCHUANG_BACKEND_URL=http://tuchuang-backend:3001
 
 # 安全配置（可以随机生成）
 SECRET_KEY=demo-secret-key-12345

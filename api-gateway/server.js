@@ -2142,7 +2142,7 @@ const upload = multer({
   }
 });
 
-// ✅ 内存存储配置（用于 imgfi 上传，不存入磁盘）
+// ✅ 内存存储配置（用于统一图床转发，不存入磁盘）
 // 使用 memoryStorage 的好处：
 // 1. 不占用磁盘空间
 // 2. 上传速度快（直接内存操作）
@@ -2150,7 +2150,7 @@ const upload = multer({
 const uploadMemory = multer({
   storage: multer.memoryStorage(), // 使用内存存储
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10MB 限制（imgfi 上传限制）
+    fileSize: 10 * 1024 * 1024 // 10MB 限制（与当前图床策略保持一致）
   }
 });
 
@@ -3535,239 +3535,81 @@ app.post('/api/files/upload', upload.single('file'), (req, res) => {
 
 // ========== Imgfi.com 图床上传接口 ==========
 /**
- * 上传图片到 imgfi.com 图床服务
- * 
- * 实现思路：
- * 1. 接收前端传来的图片文件（使用内存存储，不存入磁盘）
- * 2. 从环境变量读取 API Key
- * 3. 创建 FormData，将图片流添加到 'source' 字段
- * 4. 使用 axios 上传到 imgfi.com（30秒超时）
- * 5. 返回统一格式：{ success: true, url: '...' }
- * 
- * 技术要点：
- * - multer.memoryStorage(): 文件存储在内存中，不占用磁盘
- * - FormData: 用于 multipart/form-data 格式上传
- * - axios: 用于 HTTP 请求
- * - 环境变量: 安全存储 API Key
+ * 统一图床上传入口（M2.5 正式主线）
+ *
+ * 架构意图：
+ * - 前端以后只认网关，不直连具体图床服务
+ * - 当前正式图床后端为 tuchuang-backend（内网服务）
+ *
+ * 协议约定：
+ * - 请求：multipart/form-data
+ * - 字段名：file
+ * - 下游：POST http://tuchuang-backend:3001/api/upload
+ * - 返回：统一收口为 success/url/key/originalName 等稳定结构
  */
-app.post('/api/upload-to-imgfi', uploadMemory.single('image'), async (req, res) => {
-  // 调试日志：确认接口被调用
-  console.log('📥 [Imgfi] 收到上传请求');
+app.post('/api/upload-image', uploadMemory.single('file'), async (req, res) => {
+  console.log('📥 [UploadImage] 收到统一图床上传请求');
   console.log('  - 请求路径:', req.path);
-  console.log('  - 请求方法:', req.method);
   console.log('  - Content-Type:', req.headers['content-type']);
   console.log('  - 文件信息:', req.file ? {
     originalname: req.file.originalname,
     size: req.file.size,
     mimetype: req.file.mimetype
   } : '无文件');
+
   try {
-    // 1. 检查文件是否存在
     if (!req.file) {
-      return res.status(400).json({ 
-        success: false, 
-        error: '没有上传文件' 
+      return res.status(400).json({
+        success: false,
+        error: '没有上传文件，请使用 form-data 并传入字段 file'
       });
     }
 
-    // 2. 从环境变量读取 API Key 和上传地址
-    const apiKey = process.env.IMGFI_API_KEY;
-    const uploadUrl = process.env.IMGFI_UPLOAD_URL || 'https://imgfi.com/api/1/upload';
+    const tuchuangBaseUrl = process.env.TUCHUANG_BACKEND_URL || 'http://tuchuang-backend:3001';
+    const uploadUrl = `${tuchuangBaseUrl}/api/upload`;
 
-    // ✅ 调试日志：检查 API Key 是否正确读取（不输出完整 Key，只输出前几位）
-    console.log('🔑 [Imgfi] API Key 检查:');
-    console.log('  - API Key 是否存在:', apiKey ? '是' : '否');
-    console.log('  - API Key 前10位:', apiKey ? apiKey.substring(0, 10) + '...' : '无');
-    console.log('  - 上传地址:', uploadUrl);
-
-    if (!apiKey) {
-      console.error('❌ [Imgfi] API Key 未配置，请检查 .env 文件');
-      return res.status(500).json({ 
-        success: false, 
-        error: '服务器配置错误：API Key 未设置' 
-      });
-    }
-
-    console.log('📤 [Imgfi] 开始上传图片到 imgfi.com');
-    console.log(`  - 文件名: ${req.file.originalname}`);
-    console.log(`  - 文件大小: ${(req.file.size / 1024).toFixed(2)} KB`);
-
-    // 3. 创建 FormData（用于 multipart/form-data 格式）
-    // FormData 是 Node.js 中用于创建 multipart/form-data 请求体的工具
-    const FormData = require('form-data');
     const formData = new FormData();
-    
-    // 将图片 Buffer 添加到 FormData，字段名为 'source'（imgfi.com 要求的字段名）
-    // req.file.buffer 是内存中的文件数据（Buffer 对象）
-    formData.append('source', req.file.buffer, {
+    formData.append('file', req.file.buffer, {
       filename: req.file.originalname || 'image.jpg',
-      contentType: req.file.mimetype || 'image/jpeg'
+      contentType: req.file.mimetype || 'application/octet-stream'
     });
 
-    // 4. 使用 axios 上传到 imgfi.com
-    // 设置 30 秒超时，防止请求挂起
+    console.log('📤 [UploadImage] 转发到 tuchuang-backend:', uploadUrl);
+
     const response = await axios.post(uploadUrl, formData, {
       headers: {
-        'X-API-Key': apiKey,  // imgfi.com 要求的认证头
-        ...formData.getHeaders()  // FormData 的 headers（包含 Content-Type 和 boundary）
+        ...formData.getHeaders()
       },
-      timeout: 30000,  // 30 秒超时
+      timeout: 30000,
       maxContentLength: Infinity,
-      maxBodyLength: Infinity
+      maxBodyLength: Infinity,
+      validateStatus: () => true
     });
 
-    // 5. 检查响应并返回结果
-    // ✅ 调试日志：输出完整的响应信息
-    console.log('📥 [Imgfi] imgfi.com 响应:');
-    console.log('  - HTTP 状态码:', response.status);
-    console.log('  - 响应数据:', JSON.stringify(response.data, null, 2));
-    
-    // 根据 imgfi.com API 文档，响应结构是：
-    // {
-    //   "status_code": 200,
-    //   "image": {
-    //     "url": "https://s.imgfi.com/images/...",
-    //     "image": { "url": "..." }  // 嵌套结构
-    //   }
-    // }
-    // 所以 URL 在 response.data.image.url，而不是 response.data.url
-    
-    let imgfiUrl = null;
-    
-    // 尝试多种可能的 URL 路径（容错处理）
-    if (response.data) {
-      // 优先：response.data.image.url（主要图片 URL）
-      if (response.data.image && response.data.image.url) {
-        imgfiUrl = response.data.image.url;
-        console.log('✅ [Imgfi] 从 image.url 获取 URL:', imgfiUrl);
-      }
-      // 备选：response.data.image.image.url（嵌套结构中的 URL）
-      else if (response.data.image && response.data.image.image && response.data.image.image.url) {
-        imgfiUrl = response.data.image.image.url;
-        console.log('✅ [Imgfi] 从 image.image.url 获取 URL:', imgfiUrl);
-      }
-      // 备选：response.data.url（直接路径，虽然文档中没有，但保留作为容错）
-      else if (response.data.url) {
-        imgfiUrl = response.data.url;
-        console.log('✅ [Imgfi] 从 url 获取 URL:', imgfiUrl);
-      }
-    }
-    
-    if (imgfiUrl) {
-      console.log('✅ [Imgfi] 上传成功:', imgfiUrl);
-      
-      // 返回统一格式
-      return res.json({
-        success: true,
-        url: imgfiUrl
-      });
-    } else {
-      // imgfi.com 返回了数据，但无法找到 url 字段
-      console.warn('⚠️ [Imgfi] 响应格式异常: 无法找到 URL');
-      console.warn('  - 完整响应数据:', JSON.stringify(response.data, null, 2));
-      console.warn('  - 响应数据类型:', typeof response.data);
-      console.warn('  - 响应数据键:', response.data ? Object.keys(response.data) : '无');
-      if (response.data && response.data.image) {
-        console.warn('  - image 对象键:', Object.keys(response.data.image));
-      }
-      
-      return res.status(500).json({
+    console.log('📥 [UploadImage] tuchuang-backend 响应状态:', response.status);
+
+    const payload = response.data || {};
+    if (response.status >= 400 || !payload.success || !payload.data?.url) {
+      return res.status(response.status >= 400 ? response.status : 502).json({
         success: false,
-        error: '上传成功，但未获取到外链 URL。响应数据：' + JSON.stringify(response.data)
+        error: payload.message || payload.error || '图床服务上传失败',
+        upstreamStatus: response.status
       });
     }
 
+    return res.json({
+      success: true,
+      url: payload.data.url,
+      key: payload.data.key,
+      originalName: payload.data.originalName,
+      mimeType: payload.data.mimeType,
+      size: payload.data.size
+    });
   } catch (error) {
-    // ✅ 增强错误日志：输出完整的错误信息
-    console.error('❌ [Imgfi] 上传失败 - 详细错误信息:');
-    console.error('  - 错误消息:', error.message);
-    console.error('  - 错误代码:', error.code);
-    console.error('  - 错误堆栈:', error.stack);
-    
-    // 如果是 axios 错误，输出更多信息（使用摘要，避免循环引用）
-    // 原理：error.request 包含整个 Socket 对象（有循环引用），error.response.headers 也可能有循环引用
-    // 只记录关键字段，既满足排错需求，又避免崩溃
-    if (error.response) {
-      // 有响应：服务器返回了错误状态码
-      console.error('  - HTTP 状态码:', error.response.status);
-      
-      // 只记录关键响应头，避免循环引用
-      const safeHeaders = {};
-      const importantHeaders = ['content-type', 'content-length', 'server', 'date', 'x-ratelimit-remaining'];
-      importantHeaders.forEach(key => {
-        const headerKey = key.toLowerCase();
-        if (error.response.headers[headerKey] || error.response.headers[key]) {
-          safeHeaders[key] = error.response.headers[headerKey] || error.response.headers[key];
-        }
-      });
-      console.error('  - 响应头（摘要）:', safeHeaders);
-      
-      // 响应数据通常是 JSON，可以安全序列化
-      try {
-        console.error('  - 响应数据:', JSON.stringify(error.response.data, null, 2));
-      } catch (err) {
-        console.error('  - 响应数据:', safeStringify(error.response.data));
-      }
-    } else if (error.request) {
-      // 无响应：请求已发送但未收到响应（超时、网络中断等）
-      console.error('  - 请求已发送，但未收到响应 (可能是超时或网络中断)');
-      
-      // 只记录关键字段，避免循环引用（error.request 包含整个 Socket 对象）
-      console.error('  - 请求摘要:', {
-        method: error.config?.method || 'UNKNOWN',
-        url: error.config?.url || 'UNKNOWN',
-        timeout: error.config?.timeout || '未设置',
-        code: error.code || 'UNKNOWN',
-        message: error.message || '无详细信息'
-      });
-    } else {
-      // 其他类型的错误（配置错误等）
-      console.error('  - 错误类型: 非网络错误');
-      console.error('  - 错误详情:', safeStringify(error));
-    }
-    
-    // 详细的错误处理
-    let errorMessage = '上传失败';
-    let statusCode = 500;
-
-    if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
-      // 请求超时
-      errorMessage = '上传超时，请稍后重试';
-      statusCode = 408;
-    } else if (error.code === 'ECONNREFUSED' || error.code === 'ERR_NETWORK') {
-      // 网络连接错误
-      errorMessage = '无法连接到图床服务';
-      statusCode = 503;
-    } else if (error.response) {
-      // HTTP 错误响应（imgfi.com 返回的错误）
-      statusCode = error.response.status;
-      const data = error.response.data;
-      
-      console.error('  - imgfi.com 返回的错误:', {
-        status: statusCode,
-        data: data
-      });
-      
-      if (statusCode === 401) {
-        errorMessage = 'API Key 无效或已过期，请检查配置';
-      } else if (statusCode === 413) {
-        errorMessage = '文件过大，请上传小于 10MB 的图片';
-      } else if (statusCode === 400) {
-        errorMessage = data?.error || data?.message || '请求参数错误';
-      } else if (statusCode === 500) {
-        errorMessage = data?.error || data?.message || '图床服务内部错误';
-      } else {
-        errorMessage = data?.error || data?.message || `上传失败 (HTTP ${statusCode})`;
-      }
-    } else if (error.message) {
-      // 其他错误（可能是代码错误）
-      errorMessage = error.message;
-      console.error('  - 可能是代码错误，请检查后端日志');
-    }
-
-    return res.status(statusCode).json({
+    console.error('❌ [UploadImage] 转发图床服务失败:', error.message);
+    return res.status(500).json({
       success: false,
-      error: errorMessage
+      error: error.message || '统一图床上传失败'
     });
   }
 });

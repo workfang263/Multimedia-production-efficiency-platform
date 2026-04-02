@@ -43,8 +43,8 @@ Ini
 # 必须配置：你电脑上 FFmpeg 的实际路径
 FFMPEG_PATH=C:\ffmpeg\bin\ffmpeg.exe 
 
-# 可选配置：Imgfi API Key（用于上传外链功能）
-IMGFI_API_KEY=你的密钥
+# 可选配置：统一图床下游地址（云端默认走 tuchuang-backend）
+# TUCHUANG_BACKEND_URL=http://tuchuang-backend:3001
 4. 启动系统
 双击运行根目录下的：
 👉 start_demo.bat
