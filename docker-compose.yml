@@ -75,7 +75,7 @@ services:
     build: ../tuchuang-backend
     container_name: ronghe-tuchuang-backend
     restart: unless-stopped
-    # 使用图床项目自带的 .env（包含 OSS 凭证与端口）；该文件不应提交到 Git
+    # 当前部署方式使用同机源码构建；图床私密配置仍由图床仓库自己的 .env 提供
     env_file:
       - ../tuchuang-backend/.env
     environment:
@@ -102,12 +102,17 @@ services:
     image: nginx:alpine
     container_name: ronghe-nginx
     restart: unless-stopped
+    environment:
+      # 生产建议设置为公网可达地址；本地 Docker on Linux 可使用 host.docker.internal
+      PRODUCT_TABLE_UPSTREAM: ${PRODUCT_TABLE_UPSTREAM:-http://host.docker.internal:5001/}
     # 宿主机 8081 → 容器内 80（宿主 80 可留给其他项目）；访问 http://宿主IP:8081
     ports:
       - "8081:80"
     volumes:
       - ./frontend/dist:/usr/share/nginx/html:ro
-      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - api-gateway
     # 默认网络保留与 api-gateway 等同栈服务互联；app-network 供后续 oauth2-proxy、fb-ad-nginx 等同名 DNS

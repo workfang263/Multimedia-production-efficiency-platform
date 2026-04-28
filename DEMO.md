@@ -64,9 +64,9 @@ cp env.example .env
 
 ```env
 # 服务端口（如果端口被占用，可以修改）
-PORT=18081
+PORT=18083
 FRONTEND_URL=http://localhost:18080
-VIDEO_GENERATION_URL=http://localhost:19000
+VIDEO_GENERATION_URL=http://localhost:18091
 
 # 环境模式
 NODE_ENV=development
@@ -134,8 +134,8 @@ python3 app.py
 启动成功后，在浏览器中打开：
 
 - **前端界面**: http://localhost:18080
-- **API 网关**: http://localhost:18081
-- **视频服务**: http://localhost:19000
+- **API 网关**: http://localhost:18083
+- **视频服务**: http://localhost:18091
 
 ## 📝 演示功能说明
 
@@ -157,7 +157,7 @@ python3 app.py
 修改 `.env` 文件中的端口号，例如：
 ```env
 PORT=18082
-FRONTEND_URL=http://localhost:18081
+FRONTEND_URL=http://localhost:18080
 ```
 
 ### 问题 2: FFmpeg 未找到
