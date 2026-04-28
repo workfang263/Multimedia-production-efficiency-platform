@@ -262,7 +262,7 @@
                                                 preload="metadata" 
                                                 style="display: none;"
                                             >
-                                                <source :src="'/assets/music/' + music.filename" :type="getAudioMimeType(music.filename)">
+                                                <source :src="getMusicUrl(music.filename)" :type="getAudioMimeType(music.filename)">
                                             </audio>
                                             
                                             <!-- 播放/暂停按钮 -->
@@ -280,10 +280,10 @@
                                             <button 
                                                 type="button" 
                                                 class="btn btn-sm btn-success use-music-btn" 
-                                                :data-music-url="'/assets/music/' + music.filename"
+                                                :data-music-url="getMusicUrl(music.filename)"
                                                 :data-music-name="music.filename"
                                                 :data-music-id="music.id"
-                                                @click="useCommonMusic('/assets/music/' + music.filename, music.filename, music.id)"
+                                                @click="useCommonMusic(getMusicUrl(music.filename), music.filename, music.id)"
                                             >
                                                 <span class="btn-text">使用此音乐</span>
                                                 <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
@@ -377,6 +377,11 @@ function getAudioMimeType(filename) {
   const ext = filename.split('.').pop()?.toLowerCase()
   if (ext === 'm4a') return 'audio/mp4'
   return 'audio/mpeg'
+}
+
+// 统一生成音乐静态资源路径，兼容本地 /ronghe/ 子路径和云端部署路径
+function getMusicUrl(filename) {
+  return `${import.meta.env.BASE_URL}assets/music/${filename}`
 }
 
 // 计算属性：按分组组织音乐（可选，用于未来分组显示功能）
