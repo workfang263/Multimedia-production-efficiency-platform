@@ -164,7 +164,6 @@ console.error = function(...args) {
 const SERVICES = {
   adCampaign: process.env.AD_CAMPAIGN_URL || 'http://localhost:8889',
   videoGeneration: process.env.VIDEO_GENERATION_URL || 'http://localhost:18091', // 融合平台专用视频服务（18091端口）
-  videoGenerationOriginal: 'http://localhost:9000' // 原始9000端口服务（如需使用原系统）
 };
 
 // 图片链接存储（按会话隔离）
@@ -1844,16 +1843,18 @@ function normalizeOriginValue(o) {
 
 app.use(cors({
   origin: function (origin, callback) {
-    // 允许的来源列表
-    const allowedOrigins = [
-      process.env.FRONTEND_URL || 'http://localhost:18080',
-      // Docker / 生产：经 Nginx 用默认 80 端口打开时，Origin 为 http://localhost（无 :18080），必须单独放行
-      'http://localhost',
-      'http://127.0.0.1',
-      'http://192.168.0.51:5173',  // Shoplazza 系统
-      'http://localhost:5173',     // Shoplazza 本地开发
-      'http://192.168.0.51:18080', // 融合平台外部访问
-    ];
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    const allowedOrigins = [process.env.FRONTEND_URL || 'http://localhost:18080'];
+    if (isDevelopment) {
+      allowedOrigins.push(
+        'http://localhost',
+        'http://127.0.0.1',
+        'http://localhost:5173',
+        'http://127.0.0.1:5173',
+        'http://192.168.0.51:5173',
+        'http://192.168.0.51:18080',
+      );
+    }
 
     // 部署到云服务器时：浏览器 Origin 为 http://公网IP 或域名，需在此显式放行（见 env.example 的 CORS_EXTRA_ORIGINS）
     const extraOrigins = (process.env.CORS_EXTRA_ORIGINS || '')
@@ -1877,22 +1878,13 @@ app.use(cors({
         return callback(null, true);
       }
       
-      // 新增：允许所有内网 IP (192.168.x.x) 访问
-      // 匹配格式：http://192.168.x.x:端口号（或归一化后的 origin）
-      const isLocalNetwork = /^http:\/\/192\.168\.\d{1,3}\.\d{1,3}(:\d+)?$/.test(origin) ||
-        /^http:\/\/192\.168\.\d{1,3}\.\d{1,3}(:\d+)?$/.test(norm);
-      if (isLocalNetwork) {
-        console.log(`✅ 允许内网访问: ${origin}`);
-        return callback(null, true);
-      }
-      
       // 如果不在列表中，拒绝请求
       console.warn(`⚠️  CORS 拒绝访问: ${origin}`);
-      callback(new Error('Not allowed by CORS'));
+      return callback(new Error('CORS_NOT_ALLOWED'));
     } catch (error) {
-      // 如果函数内部出错，记录错误但允许请求（避免阻塞）
+      // 如果函数内部出错，记录错误并拒绝请求，避免误放行
       console.error('CORS origin 函数错误:', error);
-      callback(null, true); // 降级处理：允许请求
+      return callback(new Error('CORS_CHECK_FAILED'));
     }
   },
   credentials: true,
@@ -2156,31 +2148,8 @@ const uploadMemory = multer({
 
 
 // 静态文件服务
-// 开发模式下代理到Vite开发服务器
-if (process.env.NODE_ENV === 'development') {
-  app.get('*', async (req, res) => {
-    try {
-      const response = await axios({
-        method: req.method,
-        url: `http://localhost:18081${req.path}`,
-        data: req.body,
-        params: req.query,
-        headers: {
-          ...req.headers,
-          host: undefined
-        },
-        timeout: 5000
-      });
-      
-      res.status(response.status).send(response.data);
-    } catch (error) {
-      res.status(500).send('前端服务不可用');
-    }
-  });
-} else {
-  // 生产模式下使用构建后的静态文件
-  app.use(express.static(path.join(__dirname, '../frontend/dist')));
-}
+// 统一挂载静态目录，开发环境是否代理前端页面由 DEV_PROXY_ENABLED 控制
+app.use(express.static(path.join(__dirname, '../frontend/dist')));
 app.use('/uploads', express.static('uploads'));
 
 // 静态文件服务：public/temp 目录（用于图片拼接素材）
@@ -3706,14 +3675,37 @@ app.get('/api/stats', async (req, res) => {
 // 前端路由（SPA 兜底）：Docker 网关镜像通常不含 ../frontend/dist，sendFile 失败会进全局 500
 // 未命中 /temp、/uploads 下具体文件时勿把请求当 SPA，避免 ENOENT
 const spaIndexPath = path.join(__dirname, '../frontend/dist/index.html');
-app.get('*', (req, res) => {
+const devProxyEnabled = process.env.DEV_PROXY_ENABLED === 'true';
+const devProxyTarget = process.env.DEV_PROXY_TARGET || 'http://localhost:18081';
+app.get('*', async (req, res) => {
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ error: 'Not found' });
+  }
   if (req.path.startsWith('/temp/') || req.path.startsWith('/uploads/')) {
     return res.status(404).type('text/plain').send('Not found');
+  }
+  if (devProxyEnabled) {
+    try {
+      const response = await axios({
+        method: req.method,
+        url: `${devProxyTarget}${req.path}`,
+        params: req.query,
+        headers: {
+          ...req.headers,
+          host: undefined
+        },
+        timeout: 5000
+      });
+      return res.status(response.status).send(response.data);
+    } catch (error) {
+      console.error('开发代理失败:', error.message);
+      return res.status(502).send('开发代理目标不可用');
+    }
   }
   if (!fsSync.existsSync(spaIndexPath)) {
     return res.status(404).json({ error: 'Not found', message: '网关未内置前端 dist，请使用 Nginx 提供静态页' });
   }
-  res.sendFile(spaIndexPath);
+  return res.sendFile(spaIndexPath);
 });
 
 // 错误处理中间件

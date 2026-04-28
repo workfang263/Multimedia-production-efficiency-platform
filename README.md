@@ -48,11 +48,12 @@ FFMPEG_PATH=C:\ffmpeg\bin\ffmpeg.exe
 4. 启动系统
 双击运行根目录下的：
 👉 start_demo.bat
-(系统将自动开启三个终端窗口，分别运行：前端 [18080]、网关 [18081]、视频服务 [19000])
+(系统将自动开启三个终端窗口，分别运行：前端 [18080]、网关 [18083]、视频服务 [18091])
 📂 项目结构
 api-gateway/: Node.js 流量分发中心
 frontend/: Vue 3 现代化前端应用
 video-service/: Python + FFmpeg 视频合成服务
+oss-upload-service/: 历史独立服务（当前默认 docker-compose 未启用）
 install.bat: 一键环境部署脚本
 start_demo.bat: 一键启动服务脚本
 ❓ 常见问题
@@ -63,5 +64,5 @@ pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 FFmpeg 报错？
 请确保在 .env 文件中填写的路径是指向 ffmpeg.exe 的完整绝对路径。
 端口占用？
-请关闭占用 18080/18081 端口的程序，或在 .env 中重新指定 PORT。
+请关闭占用 18080/18083/18091 端口的程序，或在 .env 中重新指定对应端口。
 © 2026 workfang263. 基于 MIT 协议开源，祝你使用愉快！

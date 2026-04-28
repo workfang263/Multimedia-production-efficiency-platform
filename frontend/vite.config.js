@@ -42,7 +42,7 @@ export default defineConfig({
     force: true,
     // CSP配置：Bootstrap已通过npm本地安装，不再依赖CDN
     headers: {
-      'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https: http:; connect-src 'self' https: http: ws: wss:; frame-src 'self' http://192.168.0.67:5001 http://192.168.0.67:*; frame-ancestors 'self' http://192.168.0.51:5173 http://localhost:5173"
+      'Content-Security-Policy': "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: https: http:; connect-src 'self' https: http: ws: wss:; frame-src 'self'; frame-ancestors 'self'"
     }
   },
   build: {

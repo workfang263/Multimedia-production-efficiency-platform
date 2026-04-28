@@ -1,7 +1,7 @@
 <template>
   <div class="product-table-container">
     <iframe
-      src="http://192.168.0.67:5001/"
+      :src="iframeSrc"
       frameborder="0"
       class="product-table-iframe"
       title="产品表格生成工具"
@@ -14,6 +14,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 
 const iframeRef = ref(null)
+const iframeSrc = import.meta.env.VITE_PRODUCT_TABLE_PATH || '/product-table-tool/'
 
 // iframe 加载完成
 const onIframeLoad = () => {

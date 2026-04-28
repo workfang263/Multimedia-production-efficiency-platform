@@ -110,9 +110,9 @@ copy env.example .env
 ```
 
 **需要配置的内容：**
-- `PORT` - API 网关端口（默认: 18081）
+- `PORT` - API 网关端口（默认: 18083）
 - `FRONTEND_URL` - 前端地址（默认: http://localhost:18080）
-- `VIDEO_GENERATION_URL` - 视频服务地址（默认: http://localhost:19000）
+- `VIDEO_GENERATION_URL` - 视频服务地址（默认: http://localhost:18091）
 - `TUCHUANG_BACKEND_URL` - **可选**，如需覆盖默认内网图床地址时使用
 - `SECRET_KEY` - 应用密钥（可以随机生成）
 - `JWT_SECRET` - JWT 密钥（可以随机生成）

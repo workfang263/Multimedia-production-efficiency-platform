@@ -1516,7 +1516,7 @@ def stitch_images():
         # 使用与图片路径相同的 Session ID，确保一致性
         # 路径格式：/temp/{sessionId}/filename.jpg
         local_path = f'/temp/{output_session_id}/{output_filename}'
-        public_url = f'http://localhost:18083{local_path}'
+        public_url = local_path
         
         print(f"[Stitch] 拼接完成: {output_filename}", flush=True)
         print(f"{'='*60}\n", flush=True)

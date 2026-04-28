@@ -180,8 +180,8 @@ export const useImageStitchStore = defineStore('imageStitch', () => {
    *   id: 'uuid',
    *   originalUrl: 'https://...',
    *   localPath: '/temp/xxx.jpg',
-   *   publicUrl: 'http://localhost:18083/temp/xxx.jpg',
-   *   previewUrl: 'http://localhost:18083/temp/xxx.jpg'
+   *   publicUrl: '/temp/xxx.jpg',
+   *   previewUrl: '/temp/xxx.jpg'
    * }
    */
   const addMaterial = async (material) => {

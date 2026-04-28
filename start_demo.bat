@@ -72,15 +72,15 @@ echo ========================================
 echo.
 
 REM 启动视频服务
-echo [启动] 视频服务 (端口 19000)...
-start "Video Service (19000)" cmd /k "cd /d %CD%\video-service && python app.py"
+echo [启动] 视频服务 (端口 18091)...
+start "Video Service (18091)" cmd /k "cd /d %CD%\video-service && python app.py"
 
 REM 等待 2 秒
 timeout /t 2 /nobreak >nul
 
 REM 启动 API 网关
-echo [启动] API 网关 (端口 18081)...
-start "API Gateway (18081)" cmd /k "cd /d %CD%\api-gateway && node server.js"
+echo [启动] API 网关 (端口 18083)...
+start "API Gateway (18083)" cmd /k "cd /d %CD%\api-gateway && node server.js"
 
 REM 等待 2 秒
 timeout /t 2 /nobreak >nul
@@ -96,8 +96,8 @@ echo ========================================
 echo.
 echo 访问地址：
 echo   前端界面: http://localhost:18080
-echo   API 网关: http://localhost:18081
-echo   视频服务: http://localhost:19000
+echo   API 网关: http://localhost:18083
+echo   视频服务: http://localhost:18091
 echo.
 echo 提示：每个服务都在独立的窗口中运行
 echo       关闭对应的窗口即可停止该服务

@@ -52,6 +52,16 @@ server {
         proxy_send_timeout 300s;
     }
 
+    # 产品表工具：前端使用同源路径，真实上游地址由 PRODUCT_TABLE_UPSTREAM 注入。
+    location /product-table-tool/ {
+        proxy_pass ${PRODUCT_TABLE_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
     # 网关上的静态目录（与 api-gateway express.static 一致）；不反代则 Nginx 会 try_files 到 SPA，图片请求错成 HTML
     location /temp/ {
         proxy_pass http://api-gateway:18083;

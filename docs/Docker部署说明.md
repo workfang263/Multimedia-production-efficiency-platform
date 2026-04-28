@@ -25,7 +25,7 @@
 ## 你需要自行对齐的两处（否则易 502）
 
 1. **Nginx `location /api/` 与 Express 路由**  
-   若网关实际没有 `/api` 前缀，需要改 `nginx/nginx.conf` 里 `proxy_pass` 与 `location`，使路径与后端一致。
+   若网关实际没有 `/api` 前缀，需要改 `nginx/default.conf.template` 里 `proxy_pass` 与 `location`，使路径与后端一致。
 
 2. **video-service 的 gunicorn 入口**  
    `Dockerfile` 默认 `app:app`。若你的 Flask 实例在别的文件或变量名不同，修改 `CMD` 最后一段。
@@ -40,7 +40,7 @@
    素材由网关 `fetch-image` 写入 **api-gateway** 容器内 `/app/public/temp`，而拼接在 **video-service** 内读盘。两容器文件系统默认不共享，需在 **`docker-compose.yml`** 中为二者挂载同一命名卷到 **`/app/public/temp`**，并设置 **`STITCH_TEMP_DIR=/app/public/temp`**（仓库已配置）。更新后执行 **`docker compose up -d --build`**。这与是否填写图床无关；图床用于上传成品外链，前提是本地拼接已成功写出文件。
 
 6. **图片拼接缩略图不显示（`/temp/...` 裂开）**  
-   批量添加 URL 后，前端用 **`/temp/会话ID/文件名`** 做预览，文件实际在 **api-gateway** 容器内。Nginx 若只配了 **`/api/`** 反代、未把 **`/temp/`** 转到网关，浏览器请求会落到 **`try_files` → `index.html`**，`<img>` 收到的是 HTML，缩略图全裂。仓库内 **`nginx/nginx.conf`** 已增加 **`location /temp/`**（及 **`/uploads/`**）反代到 **`api-gateway`**；修改后需 **`docker compose restart nginx`**（或 `up -d` 重载配置）。
+   批量添加 URL 后，前端用 **`/temp/会话ID/文件名`** 做预览，文件实际在 **api-gateway** 容器内。Nginx 若只配了 **`/api/`** 反代、未把 **`/temp/`** 转到网关，浏览器请求会落到 **`try_files` → `index.html`**，`<img>` 收到的是 HTML，缩略图全裂。仓库内 **`nginx/default.conf.template`** 已增加 **`location /temp/`**（及 **`/uploads/`**）反代到 **`api-gateway`**；修改后需 **`docker compose restart nginx`**（或 `up -d` 重载配置）。
 
 ## 建议由你执行的命令（不在此自动执行）
 
