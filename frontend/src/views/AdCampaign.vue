@@ -337,6 +337,9 @@
                     <span class="dropdown-arrow">▼</span>
                   </div>
                   <div class="checkbox-container" id="excludeCountryDropdown" style="display: none;">
+                    <div class="search-container">
+                      <input type="text" id="excludeCountrySearch" placeholder="搜索国家..." @input="searchExcludeCountries">
+                    </div>
                     <div class="checkbox-item">
                       <input type="checkbox" id="excludeSelectAll" @change="toggleAllExcludeCountries">
                       <label for="excludeSelectAll">全选</label>
@@ -579,7 +582,8 @@ const countries = ref([
   { code: 'BR', name: '巴西' }, { code: 'CL', name: '智利' }, { code: 'CW', name: '库拉索' },
   { code: 'CY', name: '塞浦路斯' }, { code: 'CZ', name: '捷克共和国' }, { code: 'GG', name: '根西岛' },
   { code: 'JP', name: '日本' }, { code: 'UA', name: '乌克兰' }, { code: 'SY', name: '叙利亚' },
-  { code: 'TR', name: '土耳其' }, { code: 'SG', name: '新加坡' }
+  { code: 'TR', name: '土耳其' }, { code: 'SG', name: '新加坡' },
+  { code: 'MX', name: '墨西哥' }
 ])
 
 // ========== 实时监听文本框变化（阶段一） ==========
@@ -804,6 +808,23 @@ const updateExcludeCountryDisplay = () => {
   } else {
     display.textContent = `已选择 ${selectedCountries.length} 个国家`
   }
+}
+
+const searchExcludeCountries = (event) => {
+  const searchTerm = event.target.value.toLowerCase()
+  const countryItems = document.querySelectorAll('#excludeCountryDropdown .checkbox-item')
+  let firstVisible = null
+  
+  countryItems.forEach(item => {
+    if (item.querySelector('#excludeSelectAll')) return
+    const text = item.textContent.toLowerCase()
+    if (text.includes(searchTerm)) {
+      item.style.display = 'block'
+      if (!firstVisible) firstVisible = item
+    } else {
+      item.style.display = 'none'
+    }
+  })
 }
 
 const closeExcludeCountryDropdown = () => {
