@@ -817,7 +817,7 @@ function processProductFields(inputData) {
       const trimmedValue = value.trim();
       
       // 阶段七：拼图对齐模式支持
-      // 如果商品ID/SPU包含逗号，说明前端已经按3:1分组了，不应该再拆分
+      // 如果商品ID/SPU包含逗号，说明前端已经按 N:1 分组了（N 由 adCampaign stitchRatio 决定，可为 3/4/5/6），不应该再拆分
       // 两种情况不拆分：
       // 1. 轮播视频模式（原有逻辑）
       // 2. 包含逗号的情况（拼图对齐模式，前端已经分组）
@@ -844,6 +844,28 @@ function processProductFields(inputData) {
     parsedFields['商品SPU'].length,
     parsedFields['商品图片链接'].length
   );
+
+  // [REORDER_MISMATCH] 诊断：分组模式下检测字段条数不一致
+  if (parsedFields['商品ID'][0] && parsedFields['商品ID'][0].includes(',')) {
+    const idGroups = parsedFields['商品ID'][0].split(',').filter(s => s.trim());
+    const idGroupCount = idGroups.length;
+    const imgCount = parsedFields['商品图片链接'].length;
+    if (imgCount !== idGroupCount) {
+      console.warn(
+        `[REORDER_MISMATCH] 拼图分组模式：商品ID 逗号分组数(${idGroupCount})与商品图片链接条数(${imgCount})不一致` +
+        ` | 商品ID=${parsedFields['商品ID'][0].substring(0, 80)} | 图片链接=${imgCount}条`
+      );
+    }
+    const spuStr = parsedFields['商品SPU'][0] || '';
+    if (spuStr && spuStr.includes(',')) {
+      const spuGroups = spuStr.split(',').filter(s => s.trim());
+      if (spuGroups.length !== idGroupCount) {
+        console.warn(
+          `[REORDER_MISMATCH] 拼图分组模式：商品ID 逗号分组数(${idGroupCount})与商品SPU 逗号分组数(${spuGroups.length})不一致`
+        );
+      }
+    }
+  }
   
   const now = new Date();
   const defaultDateStr = now.getFullYear().toString().slice(-2) +
@@ -869,7 +891,7 @@ function processProductFields(inputData) {
     if (isRotationMode) {
       console.log(`🔄 [轮播模式] 处理完成，生成 ${productRecords.length} 条记录（每组数据作为一条记录）`);
     } else {
-      console.log(`🔗 [拼图对齐模式] 处理完成，生成 ${productRecords.length} 条记录（每组数据作为一条记录，3:1分组）`);
+      console.log(`🔗 [拼图对齐模式] 处理完成，生成 ${productRecords.length} 条记录（每组数据作为一条记录，N:1 分组由前端 stitchRatio 决定）`);
     }
   }
   

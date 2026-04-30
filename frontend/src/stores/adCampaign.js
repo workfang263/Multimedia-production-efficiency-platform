@@ -44,9 +44,25 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
   /**
    * 工作流模式
    * - 'standard': 标准模式（保留原有功能，自由填写，1:1生成表格）
-   * - 'stitch_sync': 拼图对齐模式（新功能，Excel导入+外链同步，3:1强校验）
+   * - 'stitch_sync': 拼图对齐模式（新功能，Excel导入+外链同步，N:1强校验，N 由 stitchRatio 决定）
    */
   const workflowMode = ref('standard')
+
+  // ========== 拼图对齐比例 ==========
+  /**
+   * 拼图对齐比例
+   * - '3:1' / '4:1' / '5:1' / '6:1'，默认 '3:1'
+   * - 仅在 stitch_sync 模式下生效
+   */
+  const stitchRatio = ref('3:1')
+
+  /**
+   * 获取拼图对齐的 N 值
+   * 从 stitchRatio 解析，例如 '4:1' → 4
+   */
+  const getStitchN = () => {
+    return parseInt(stitchRatio.value, 10) || 3
+  }
 
   // ========== 同步来源标记 ==========
   /**
@@ -75,6 +91,69 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
     productIds: [],
     productSpus: []
   })
+
+  const resolveStitchRatio = (candidate, fallbackLinks = []) => {
+    const parsed = parseInt(String(candidate ?? fallbackLinks.length ?? ''), 10)
+    return [3, 4, 5, 6].includes(parsed) ? `${parsed}:1` : null
+  }
+
+  const getExistingSyncedRatio = () => {
+    const firstLink = productDataMapping.value.externalLinks?.[0]
+    if (!firstLink) return stitchRatio.value
+
+    return resolveStitchRatio(
+      firstLink.stitchRatio || firstLink.pieceCount,
+      firstLink.productInfo || firstLink.imageLinks || []
+    ) || stitchRatio.value
+  }
+
+  const clearCurrentStitchSyncData = () => {
+    productDataMapping.value.externalLinks = []
+    formData['商品图片链接'] = ''
+    formData['商品ID'] = ''
+    formData['商品SPU'] = ''
+  }
+
+  const ensureStitchSyncContext = async (incomingRatio) => {
+    if (!incomingRatio) return true
+
+    const hasExistingSyncedLinks =
+      syncSource.value === 'stitch' &&
+      Array.isArray(productDataMapping.value.externalLinks) &&
+      productDataMapping.value.externalLinks.length > 0
+
+    const existingRatio = hasExistingSyncedLinks ? getExistingSyncedRatio() : stitchRatio.value
+
+    if (hasExistingSyncedLinks && existingRatio !== incomingRatio) {
+      try {
+        await ElMessageBox.confirm(
+          `当前广告页已存在 ${existingRatio} 的拼图同步数据。继续将自动切换为 ${incomingRatio}，并清空当前已同步的外链、商品ID、商品SPU，是否继续？`,
+          '拼图比例切换确认',
+          {
+            type: 'warning',
+            confirmButtonText: '继续切换',
+            cancelButtonText: '取消'
+          }
+        )
+
+        clearCurrentStitchSyncData()
+      } catch {
+        return false
+      }
+    }
+
+    const modeChanged = workflowMode.value !== 'stitch_sync'
+    const ratioChanged = stitchRatio.value !== incomingRatio
+
+    workflowMode.value = 'stitch_sync'
+    stitchRatio.value = incomingRatio
+
+    if (modeChanged || ratioChanged) {
+      ElMessage.info(`已根据拼图结果自动切换到拼图对齐模式（${incomingRatio}）`)
+    }
+
+    return true
+  }
 
   // 方法：重置表单数据
   const resetFormData = () => {
@@ -167,10 +246,11 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
     } else {
       // 没有映射数据，直接切换模式
       workflowMode.value = mode
+      const currentN = getStitchN()
       if (mode === 'standard') {
-        ElMessage.info('已切换到标准模式，将跳过3:1校验')
+        ElMessage.info('已切换到标准模式，将跳过拼图对齐校验')
       } else {
-        ElMessage.info('已切换到拼图对齐模式，将启用3:1强校验')
+        ElMessage.info(`已切换到拼图对齐模式，将启用${currentN}:1强校验`)
       }
       return true
     }
@@ -253,7 +333,13 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
    * @param {string} externalLink - 外链URL
    * @param {Array} imageLinks - 图片链接数组，每个元素包含 { link, productInfo? }
    */
-  const addExternalLink = (externalLink, imageLinks) => {
+  const addExternalLink = async (externalLink, imageLinks, stitchMeta = {}) => {
+    const incomingRatio = resolveStitchRatio(stitchMeta.stitchRatio || stitchMeta.pieceCount, imageLinks)
+    const contextReady = await ensureStitchSyncContext(incomingRatio)
+    if (!contextReady) {
+      return false
+    }
+
     // 去重检查：检查外链是否已存在
     const normalizedExternalLink = normalizeUrl(externalLink)
     const existing = productDataMapping.value.externalLinks.find(
@@ -262,14 +348,16 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
     
     if (existing) {
       ElMessage.warning('该外链已同步过，不再重复追加')
-      return
+      return false
     }
     
     // 构建外链记录
     const linkRecord = {
       externalLink,
       imageLinks: imageLinks.map(item => normalizeUrl(item.link)),
-      productInfo: imageLinks.map(item => item.productInfo).filter(Boolean) // 商品信息（如果有）
+      productInfo: imageLinks.map(item => item.productInfo).filter(Boolean), // 商品信息（如果有）
+      pieceCount: parseInt(incomingRatio, 10) || imageLinks.length,
+      stitchRatio: incomingRatio || stitchRatio.value,
     }
     
     // 智能切换逻辑
@@ -297,6 +385,7 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
     updateImageLinkMapping()
     
     console.log('✅ [Store] 已添加外链:', externalLink)
+    return true
   }
 
   /**
@@ -322,7 +411,7 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
   // ========== 数据对齐相关方法 ==========
   /**
    * 对齐数据
-   * 根据外链和图片链接，匹配商品ID和SPU，按3:1规则对齐
+   * 根据外链和图片链接，匹配商品ID和SPU，按 N:1 规则对齐（N 由 stitchRatio 决定）
    */
   const alignData = () => {
     if (workflowMode.value !== 'stitch_sync') {
@@ -331,11 +420,12 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
     }
     
     // 校验
-    if (!validateStrictThree()) {
+    if (!validateStrictStitch()) {
       return
     }
     
     // 对齐逻辑
+    const N = getStitchN()
     const externalLinks = productDataMapping.value.externalLinks || []
     const alignedProductIds = []
     const alignedProductSpus = []
@@ -344,7 +434,7 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
       const { imageLinks, productInfo } = linkRecord
       
       // 优先使用素材自带的商品信息（最准确）
-      if (productInfo && productInfo.length === 3) {
+      if (productInfo && productInfo.length === N) {
         productInfo.forEach(info => {
           alignedProductIds.push(info.productId)
           alignedProductSpus.push(info.productSpu)
@@ -372,12 +462,6 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
 
   // ========== 校验函数 ==========
   /**
-   * 严格的三倍数校验（仅拼图对齐模式）
-   * 校验外链数量 × 3 是否等于商品ID数量
-   * 
-   * @returns {boolean} 校验是否通过
-   */
-  /**
    * 解析层函数：从表单文本框中实时解析有效的外链列表
    * 
    * 技术原理：
@@ -403,59 +487,42 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
   }
 
   /**
-   * 严格的三倍数校验（仅拼图对齐模式）
+   * 严格的 N:1 倍数校验（仅拼图对齐模式）
    * 
    * 核心设计理念：基于"实时解析"的校验 + 精准报错
    * - 校验脱离 Store 计数：完全基于 formData['商品图片链接'] 文本框内解析出的实时行数
    * - Store 职责定位：Store 仅作为"映射字典"使用，不参与计数
    * - 健壮性：在解析文本框时，务必处理好空行和空格，确保统计的链接数量是准确的
    * - 精准报错：检测具体哪一组外链缺失商品ID，并提示精确的行号范围
-   * 
-   * 修复问题：
-   * - 之前使用 Store 中的 externalLinks 数组，导致用户删除表单外链后校验仍然使用旧数据
-   * - 现在改为实时解析表单文本框，确保校验与实际数据一致
-   * - 优化错误提示：从"数据不匹配"改为"第X组外链缺失对应的商品ID，请检查第Y-Z行"
+   * - N 化：N 由 stitchRatio 决定（3:1/4:1/5:1/6:1）
    * 
    * 行号计算公式：
    * - textarea的行号是从1开始的
    * - 第groupIndex组（从1开始）对应的商品ID行号范围：
-   *   起始行 = (groupIndex - 1) * 3 + 1
-   *   结束行 = (groupIndex - 1) * 3 + 3
-   * - 例如：第3组对应的行号范围是 (3-1)*3+1 到 (3-1)*3+3，即第7、8、9行
+   *   起始行 = (groupIndex - 1) * N + 1
+   *   结束行 = (groupIndex - 1) * N + N
+   * - 例如 N=3 第3组：行号范围 (3-1)*3+1 到 (3-1)*3+3，即第7、8、9行
    * 
    * @returns {boolean} 校验是否通过
    */
-  const validateStrictThree = () => {
+  const validateStrictStitch = () => {
     // 只在拼图对齐模式下校验
     if (workflowMode.value !== 'stitch_sync') {
       return true
     }
     
+    const N = getStitchN()
+    
     // ========== 步骤1：实时解析表单中的外链数量（主数据源） ==========
-    /**
-     * 使用解析层函数获取表单中的有效外链列表
-     * 这是用户当前在文本框中看到的数据，是校验的基准
-     */
     const currentLinks = getFormLinks()
-    const linkCount = currentLinks.length // 例如：3个
+    const linkCount = currentLinks.length
     
     // ========== 步骤2：解析表单中的商品ID数量 ==========
-    /**
-     * 从表单中获取商品ID数量
-     * 同样需要处理空行和空格，确保统计准确
-     */
     const productIds = formData['商品ID'] ? 
       formData['商品ID'].split('\n').map(id => id.trim()).filter(id => id !== '') : []
-    const idCount = productIds.length // 例如：9个
+    const idCount = productIds.length
     
     // ========== 步骤3：校验核心逻辑 ==========
-    /**
-     * 校验核心：idCount === linkCount * 3
-     * 例如：9 === 3 * 3 ✓
-     * 
-     * 如果不符合3:1关系，说明数据不完整或不对齐
-     */
-    
     // 检查是否有外链
     if (linkCount === 0) {
       ElMessage.warning('请先同步外链或在"商品图片链接"中输入外链')
@@ -463,28 +530,16 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
     }
     
     // 计算期望的商品ID数量
-    const requiredIdCount = linkCount * 3
+    const requiredIdCount = linkCount * N
     
-    // 校验是否符合3:1关系
+    // 校验是否符合 N:1 关系
     if (idCount !== requiredIdCount) {
       // ========== 精准报错：检测具体哪一组缺失商品ID ==========
-      /**
-       * 技术原理：
-       * 1. 遍历每一组外链（从第1组开始）
-       * 2. 计算每组应该对应的商品ID行号范围
-       * 3. 检查该范围内是否有足够的商品ID
-       * 4. 找出第一个缺失的组，并提示精确的行号范围
-       */
-      
-      // 找出第一个缺失商品ID的组
       let missingGroupIndex = null
       for (let groupIndex = 1; groupIndex <= linkCount; groupIndex++) {
-        // 计算该组对应的商品ID行号范围（从1开始）
-        const startRow = (groupIndex - 1) * 3 + 1  // 起始行
-        const endRow = (groupIndex - 1) * 3 + 3    // 结束行
+        const startRow = (groupIndex - 1) * N + 1
+        const endRow = (groupIndex - 1) * N + N
         
-        // 检查该范围内是否有足够的商品ID
-        // 如果idCount小于endRow，说明这一组缺失
         if (idCount < endRow) {
           missingGroupIndex = groupIndex
           break
@@ -493,18 +548,17 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
       
       // 构建精准的错误提示
       let errorMessage = `数据不匹配！\n\n`
-      errorMessage += `当前有 ${linkCount} 个外链，需要 ${requiredIdCount} 个商品ID。\n`
+      errorMessage += `当前有 ${linkCount} 个外链，需要 ${requiredIdCount} 个商品ID（${N}:1 对齐）。\n`
       errorMessage += `但实际检测到 ${idCount} 个商品ID。\n\n`
       
       if (missingGroupIndex) {
-        // 计算缺失组的行号范围
-        const startRow = (missingGroupIndex - 1) * 3 + 1
-        const endRow = (missingGroupIndex - 1) * 3 + 3
+        const startRow = (missingGroupIndex - 1) * N + 1
+        const endRow = (missingGroupIndex - 1) * N + N
         errorMessage += `❌ 第 ${missingGroupIndex} 组外链缺失对应的商品ID，请检查第 ${startRow}-${endRow} 行。\n\n`
       }
       
       errorMessage += `提示：\n`
-      errorMessage += `1. 每个拼图需要3张图片对应3个商品ID\n`
+      errorMessage += `1. 每个拼图需要${N}张图片对应${N}个商品ID\n`
       errorMessage += `2. 请检查Excel数据是否有遗漏\n`
       errorMessage += `3. 可以点击"数据对齐"按钮自动对齐数据`
       
@@ -518,6 +572,12 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
     
     return true
   }
+
+  /**
+   * validateStrictThree 别名（向后兼容旧调用方）
+   * @deprecated 请直接使用 validateStrictStitch
+   */
+  const validateStrictThree = () => validateStrictStitch()
 
   /**
    * 行数相等校验（所有模式通用）
@@ -607,6 +667,7 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
   const checkAlignmentStatus = () => {
     if (workflowMode.value !== 'stitch_sync') return null
     
+    const N = getStitchN()
     const externalLinks = productDataMapping.value.externalLinks || []
     const imageToProduct = productDataMapping.value.imageToProduct || {}
     
@@ -635,7 +696,7 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
       }
       
       const matchedCount = products.filter(p => p.matched).length
-      const complete = matchedCount === 3
+      const complete = matchedCount === N
       
       return {
         externalLink,
@@ -667,10 +728,12 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
     isAdvancedAudience,
     generating,
     workflowMode,
+    stitchRatio,
     syncSource,
     productDataMapping,
     
     // 方法
+    getStitchN,
     resetFormData,
     updateFormData,
     getFormData,
@@ -681,6 +744,7 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
     scanAndTagMaterials,
     addExternalLink,
     alignData,
+    validateStrictStitch,
     validateStrictThree,
     validateRowCountMatch,
     checkAlignmentStatus
@@ -690,6 +754,6 @@ export const useAdCampaignStore = defineStore('adCampaign', () => {
   persist: {
     key: 'ad-campaign-data',
     storage: window.localStorage,
-    paths: ['productDataMapping', 'workflowMode', 'syncSource']
+    paths: ['productDataMapping', 'workflowMode', 'syncSource', 'stitchRatio']
   }
 })

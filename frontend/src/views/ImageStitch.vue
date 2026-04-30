@@ -89,107 +89,59 @@
         
         <!-- 画布网格布局 -->
         <div class="canvas-grid-wrapper" ref="canvasWrapper">
-          <div 
+          <div
             class="canvas-grid"
             ref="canvasGrid"
             :style="canvasGridStyleWithScale"
           >
-          <!-- 左侧大图 (默认800x1200) - 使用绝对定位 -->
-          <div
-            class="canvas-slot left-slot"
-            :class="{ 'drag-over': hoveredSlot === 'left' }"
-            :style="leftSlotStyle"
-            @dragover="handleDragOver($event, 'left')"
-            @dragleave="handleDragLeave($event, 'left')"
-            @drop="handleDrop($event, 'left')"
-          >
-            <div class="slot-content">
-              <div class="slot-placeholder" v-if="!store.getSlotMaterialId('left')">
-                <p>拖拽图片到这里</p>
-                <small>左侧大图</small>
+            <div
+              v-for="slot in renderedSlots"
+              :key="slot.slotId"
+              class="canvas-slot"
+              :class="{ 'drag-over': hoveredSlot === slot.slotId }"
+              :style="slot.style"
+              @dragover="handleDragOver($event, slot.slotId)"
+              @dragleave="handleDragLeave($event, slot.slotId)"
+              @drop="handleDrop($event, slot.slotId)"
+            >
+              <div class="slot-content">
+                <div class="slot-placeholder" v-if="!slot.materialId">
+                  <p>拖拽图片到这里</p>
+                  <small>{{ slot.label }}</small>
+                </div>
+                <img
+                  v-else
+                  :src="getMaterialPreviewUrl(slot.materialId)"
+                  :alt="slot.label"
+                  class="slot-image"
+                />
               </div>
-              <img
-                v-else
-                :src="getMaterialPreviewUrl(store.getSlotMaterialId('left'))"
-                alt="Left"
-                class="slot-image"
-              />
+            </div>
+
+            <!-- 统一分割线渲染层：先按 adjustableGuides 把各版式 guide 渲染出来 -->
+            <div
+              v-for="guide in renderedGuides"
+              :key="guide.id"
+              class="divider"
+              :class="[
+                guide.orientation === 'vertical' ? 'divider-vertical' : 'divider-horizontal',
+                {
+                  'dragging': guide.isDragging,
+                  'divider-disabled': !guide.interactive,
+                },
+              ]"
+              :style="guide.style"
+              :title="guide.title"
+              @mousedown="handleGuideMouseDown($event, guide)"
+            >
+              <div class="divider-handle"></div>
             </div>
           </div>
-
-          <!-- 右上小图 (默认400x600) - 使用绝对定位 -->
-          <div
-            class="canvas-slot top-right-slot"
-            :class="{ 'drag-over': hoveredSlot === 'topRight' }"
-            :style="topRightSlotStyle"
-            @dragover="handleDragOver($event, 'topRight')"
-            @dragleave="handleDragLeave($event, 'topRight')"
-            @drop="handleDrop($event, 'topRight')"
-          >
-            <div class="slot-content">
-              <div class="slot-placeholder" v-if="!store.getSlotMaterialId('topRight')">
-                <p>拖拽图片到这里</p>
-                <small>右上小图</small>
-              </div>
-              <img
-                v-else
-                :src="getMaterialPreviewUrl(store.getSlotMaterialId('topRight'))"
-                alt="Top Right"
-                class="slot-image"
-              />
-            </div>
-          </div>
-
-          <!-- 右下小图 (默认400x600) - 使用绝对定位 -->
-          <div
-            class="canvas-slot bottom-right-slot"
-            :class="{ 'drag-over': hoveredSlot === 'bottomRight' }"
-            :style="bottomRightSlotStyle"
-            @dragover="handleDragOver($event, 'bottomRight')"
-            @dragleave="handleDragLeave($event, 'bottomRight')"
-            @drop="handleDrop($event, 'bottomRight')"
-          >
-            <div class="slot-content">
-              <div class="slot-placeholder" v-if="!store.getSlotMaterialId('bottomRight')">
-                <p>拖拽图片到这里</p>
-                <small>右下小图</small>
-              </div>
-              <img
-                v-else
-                :src="getMaterialPreviewUrl(store.getSlotMaterialId('bottomRight'))"
-                alt="Bottom Right"
-                class="slot-image"
-              />
-            </div>
-          </div>
-
-          <!-- 纵向分割线（中间，调整左右宽度） -->
-          <div 
-            class="divider divider-vertical"
-            :class="{ 'dragging': dragging.type === 'vertical' }"
-            :style="verticalDividerStyle"
-            @mousedown="startVerticalDrag"
-            title="拖动调整左右宽度比例"
-          >
-            <div class="divider-handle"></div>
-          </div>
-
-          <!-- 横向分割线（右侧，调整右上右下高度） -->
-          <div 
-            class="divider divider-horizontal"
-            :class="{ 'dragging': dragging.type === 'horizontal' }"
-            :style="horizontalDividerStyle"
-            @mousedown="startHorizontalDrag"
-            title="拖动调整右上右下高度比例"
-          >
-            <div class="divider-handle"></div>
-          </div>
-        </div>
         </div>
         
         <!-- 提示信息 -->
         <div class="canvas-hint" v-if="!isCanvasComplete && !resultImageUrl">
-          <p>请先填充所有三个槽位（左侧大图、右上小图、右下小图）</p>
+          <p>请先填充所有 {{ pieceCount }} 个槽位</p>
         </div>
       </div>
 
@@ -216,8 +168,38 @@
           </div>
         </div>
         
+        <!-- ===== 拼图类型与画布比例 ===== -->
+        <div style="margin-bottom: 16px; padding: 10px; background: #f5f7fa; border-radius: 6px;">
+          <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+            <div>
+              <label style="font-size: 13px; color: #666; display: block; margin-bottom: 2px;">拼图类型</label>
+              <el-select v-model="puzzleType" size="small" style="width: 100px;">
+                <el-option label="3 拼" value="p3" />
+                <el-option label="4 拼" value="p4" />
+                <el-option label="5 拼" value="p5" />
+                <el-option label="6 拼" value="p6" />
+              </el-select>
+            </div>
+            <div>
+              <label style="font-size: 13px; color: #666; display: block; margin-bottom: 2px;">画布比例</label>
+              <el-select v-model="aspectRatio" size="small" style="width: 100px;">
+                <el-option label="1:1" value="1:1" />
+                <el-option label="3:4" value="3:4" />
+              </el-select>
+            </div>
+            <div>
+              <label style="font-size: 13px; color: #666; display: block; margin-bottom: 2px;">白线 (px)</label>
+              <el-input-number v-model="gutterPx" size="small" :min="0" :max="12" style="width: 90px;" />
+            </div>
+          </div>
+          <div style="font-size: 12px; color: #999; margin-top: 6px;">
+            {{ pieceCount }} 张图 | 画布 {{ store.getCanvasPixels().width }}×{{ store.getCanvasPixels().height }}px
+          </div>
+        </div>
+        
         <!-- 尺寸调整面板 -->
         <div class="size-control-section">
+          <template v-if="isP3Layout">
           <!-- 主图尺寸 -->
           <div class="size-control-group">
             <h4>主图尺寸</h4>
@@ -246,6 +228,7 @@
               />
             </div>
           </div>
+          </template>
           
           <!-- 细节1 (右上) -->
           <div class="size-control-group">
@@ -322,7 +305,7 @@
                 controls-position="right"
                 @change="handleCanvasSizeChange"
               />
-              <small class="size-hint">1:1 正方形（宽度 = 高度）</small>
+              <small class="size-hint">1:1 时宽高相等；3:4 时宽度 = 高度 × 0.75</small>
             </div>
           </div>
         </div>
@@ -419,12 +402,21 @@
 <script setup>
 import { ref, computed, reactive, watch, onMounted, onUnmounted } from 'vue'
 import { useImageStitchStore } from '@/stores/imageStitch'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
 import axios from 'axios'
+import { getSessionId } from '@/utils/session'
+import { getPieceCount } from '@/utils/puzzleLayout'
+import { PUZZLE_CONFIGS, ASPECT_RATIOS } from '@/utils/constants'
 
 // 使用 Store
 const store = useImageStitchStore()
+
+// Axios 拦截器：自动注入 x-session-id
+axios.interceptors.request.use((config) => {
+  config.headers['x-session-id'] = getSessionId()
+  return config
+})
 
 // 响应式数据
 const imageUrl = ref('')
@@ -454,23 +446,58 @@ const externalImageUrl = ref('') // 图床返回的外链 URL
 
 // 分割线拖动状态管理（使用比例系统）
 const dragging = ref({
-  type: null,              // 'vertical' | 'horizontal' | null
-  startX: 0,              // 拖动开始时的X坐标（屏幕坐标）
-  startY: 0,              // 拖动开始时的Y坐标（屏幕坐标）
-  startSplitX: 0,         // ✅ 拖动开始时的 splitX 比例值（0.0-1.0）
-  startSplitY: 0,         // ✅ 拖动开始时的 splitY 比例值（0.0-1.0）
-  canvasRect: null        // ✅ 拖动开始时的画布位置信息（用于计算相对位置）
+  guideId: null,           // 当前拖拽的 guide id
+  orientation: null,       // 'vertical' | 'horizontal'
+  controlKey: null,        // 绑定的 layoutControls 字段
+  startRatio: 0,           // 拖拽开始时的比例
+  canvasRect: null,        // 拖拽开始时的画布位置信息
 })
 
 // 计算属性 - 从 Store 获取素材列表和画布槽位
 const materials = computed(() => store.materials)
-const canvasSlots = computed(() => store.canvasSlots)
+const canvasSlots = computed(() => store.slots)
 
 // 计算属性 - 从 Store 获取图片尺寸
 const imageSizes = computed(() => store.imageSizes)
 
-// 计算属性 - 计算画布总尺寸（1:1正方形）
-const canvasSize = computed(() => store.layoutRatios.canvasSize)
+// 新 API computed
+const puzzleType = computed({
+  get: () => store.puzzleType,
+  set: (v) => {
+    if (v !== store.puzzleType && store.isCanvasComplete()) {
+      ElMessageBox.confirm(
+        '切换拼图类型会清空所有已填充的槽位，确定继续？',
+        '确认切换',
+        { confirmButtonText: '确定', cancelButtonText: '取消', type: 'warning' }
+      ).then(() => {
+        store.switchPuzzleType(v)
+      }).catch(() => {})
+    } else {
+      store.switchPuzzleType(v)
+    }
+  }
+})
+const aspectRatio = computed({
+  get: () => store.aspectRatio,
+  set: (v) => { store.aspectRatio = v }
+})
+const gutterPx = computed({
+  get: () => store.gutterPx,
+  set: (v) => { store.gutterPx = Math.max(0, Math.round(v)) }
+})
+const currentCells = computed(() => store.currentCells)
+const slotIds = computed(() => store.getSlotIds())
+const pieceCount = computed(() => getPieceCount(store.puzzleType))
+const isP3Layout = computed(() => store.puzzleType === 'p3')
+const currentGuideConfigs = computed(() => {
+  const cfg = PUZZLE_CONFIGS[store.puzzleType]
+  return cfg?.adjustableGuides || []
+})
+
+// 画布像素尺寸（用于渲染与结果校验）
+const canvasSize = computed(() => store.getCanvasPixels())
+// 基准尺寸（用于输入框联动）
+const canvasBaseSize = computed(() => store.layoutRatios.canvasSize)
 
 // ========== 输入框本地变量（用于 v-model，因为 imageSizes 是计算属性，不能直接修改）==========
 // 这些变量会从 imageSizes 计算属性同步，用户修改时通过 @change 事件调用 Store 的更新方法
@@ -486,16 +513,20 @@ const localSizes = reactive({
 
 // 监听 imageSizes 变化，同步到本地变量（用于显示）
 watch(imageSizes, (newSizes) => {
-  localSizes.leftWidth = newSizes.left.width
-  localSizes.leftHeight = newSizes.left.height
-  localSizes.topRightWidth = newSizes.topRight.width
-  localSizes.topRightHeight = newSizes.topRight.height
-  localSizes.bottomRightWidth = newSizes.bottomRight.width
-  localSizes.bottomRightHeight = newSizes.bottomRight.height
+  const left = newSizes.p3_left
+  const topRight = newSizes.p3_topRight
+  const bottomRight = newSizes.p3_bottomRight
+  if (!left || !topRight || !bottomRight) return
+  localSizes.leftWidth = left.width
+  localSizes.leftHeight = left.height
+  localSizes.topRightWidth = topRight.width
+  localSizes.topRightHeight = topRight.height
+  localSizes.bottomRightWidth = bottomRight.width
+  localSizes.bottomRightHeight = bottomRight.height
 }, { immediate: true })
 
 // 监听 canvasSize 变化，同步到本地变量
-watch(canvasSize, (newSize) => {
+watch(canvasBaseSize, (newSize) => {
   localSizes.canvasSize = newSize
 }, { immediate: true })
 
@@ -504,28 +535,28 @@ const canvasWrapper = ref(null)
 // 画布网格引用（用于获取实际渲染位置）
 const canvasGrid = ref(null)
 
-// 计算属性 - 画布网格动态样式（使用绝对定位 + aspect-ratio: 1/1）
+// 计算属性 - 画布网格动态样式（根据当前 puzzleType/aspectRatio 自适应）
 const canvasGridStyleWithScale = computed(() => {
-  // 使用比例系统：画布总尺寸（1:1正方形）
-  const size = store.layoutRatios.canvasSize
+  const pixels = store.getCanvasPixels()
+  const width = pixels.width
+  const height = pixels.height
   
-  // 基础样式：使用 aspect-ratio 强制1:1，使用绝对定位
+  // 基础样式：按真实像素比例渲染，避免 3:4 被压扁
   const baseStyle = {
-    width: `${size}px`,
-    height: `${size}px`,
-    aspectRatio: '1 / 1',  // ✅ 强制1:1正方形
-    position: 'relative'   // ✅ 绝对定位容器
+    width: `${width}px`,
+    height: `${height}px`,
+    aspectRatio: `${width} / ${height}`,
+    position: 'relative'
   }
   
   // 如果容器存在，计算自适应缩放比例
   if (canvasWrapper.value) {
-    const containerWidth = canvasWrapper.value.clientWidth - 16 // 减去padding (8px * 2)
+    const containerWidth = canvasWrapper.value.clientWidth - 16
     const containerHeight = canvasWrapper.value.clientHeight - 16
     
-    // 计算缩放比例（留5%边距，让画布更贴合容器）
-    const scaleX = (containerWidth * 0.95) / size
-    const scaleY = (containerHeight * 0.95) / size
-    const scale = Math.min(scaleX, scaleY, 1) // 不超过100%，只缩小不放大
+    const scaleX = (containerWidth * 0.95) / width
+    const scaleY = (containerHeight * 0.95) / height
+    const scale = Math.min(scaleX, scaleY, 1)
     
     if (scale < 1) {
       baseStyle.transform = `scale(${scale})`
@@ -536,14 +567,14 @@ const canvasGridStyleWithScale = computed(() => {
   return baseStyle
 })
 
-// 计算属性 - 画布网格动态样式（使用1:1正方形尺寸，不缩放）- 已废弃，使用 canvasGridStyleWithScale
+// 计算属性 - 画布网格动态样式（不缩放）
 // 保留此计算属性以防其他地方引用，但实际不再使用
 const canvasGridStyle = computed(() => {
-  const size = store.layoutRatios.canvasSize
+  const pixels = store.getCanvasPixels()
   return {
-    width: `${size}px`,
-    height: `${size}px`,
-    aspectRatio: '1 / 1',
+    width: `${pixels.width}px`,
+    height: `${pixels.height}px`,
+    aspectRatio: `${pixels.width} / ${pixels.height}`,
     position: 'relative'
   }
 })
@@ -556,81 +587,241 @@ const isCanvasComplete = computed(() => store.isCanvasComplete())
 const getCurrentScale = () => {
   if (!canvasWrapper.value) return 1
   
-  // ✅ 使用比例系统：画布总尺寸（1:1正方形）
-  const canvasSize = store.layoutRatios.canvasSize
+  const pixels = store.getCanvasPixels()
   
   const containerWidth = canvasWrapper.value.clientWidth - 24
   const containerHeight = canvasWrapper.value.clientHeight - 24
   
-  // 计算缩放比例（留10%边距）
-  const scaleX = (containerWidth * 0.9) / canvasSize
-  const scaleY = (containerHeight * 0.9) / canvasSize
-  const scale = Math.min(scaleX, scaleY, 1) // 不超过100%
+  const scaleX = (containerWidth * 0.9) / pixels.width
+  const scaleY = (containerHeight * 0.9) / pixels.height
+  const scale = Math.min(scaleX, scaleY, 1)
   
   return scale < 1 ? scale : 1
 }
 
-// 计算属性 - 纵向分割线位置样式
-// 纵向分割线位于左侧和右侧的分界处，垂直居中
-const verticalDividerStyle = computed(() => {
-  const { left } = imageSizes.value
-  
-  return {
-    left: `${left.width}px`,  // 位于左侧和右侧的分界处
-    top: '0',
-    height: '100%',
-    transform: 'translateX(-50%)' // 居中显示，让分割线在分界线的中间
-  }
+const createVerticalGuideStyle = ({ x, top, height }) => ({
+  left: `${Math.round(x)}px`,
+  top: `${Math.round(top)}px`,
+  height: `${Math.round(height)}px`,
+  transform: 'translateX(-50%)',
 })
 
-// 计算属性 - 横向分割线位置样式
-// 横向分割线位于右上和右下的分界处，水平居中
-const horizontalDividerStyle = computed(() => {
-  const { left, topRight } = imageSizes.value
-  
-  return {
-    left: `${left.width}px`,        // 从左侧宽度开始（右侧区域的起始位置）
-    top: `${topRight.height}px`,     // 位于右上和右下的分界处
-    width: `${topRight.width}px`,     // 宽度等于右侧宽度
-    transform: 'translateY(-50%)'  // 居中显示，让分割线在分界线的中间
-  }
+const createHorizontalGuideStyle = ({ left, y, width }) => ({
+  left: `${Math.round(left)}px`,
+  top: `${Math.round(y)}px`,
+  width: `${Math.round(width)}px`,
+  transform: 'translateY(-50%)',
 })
 
-// ========== 绝对定位槽位样式计算属性 ==========
-// 左侧槽位：绝对定位在左侧，占据整个高度
-const leftSlotStyle = computed(() => {
-  const { left } = imageSizes.value
-  return {
-    position: 'absolute',
-    left: '0',
-    top: '0',
-    width: `${left.width}px`,
-    height: `${left.height}px`
+/**
+ * 术语 = guide
+ * 具体含义：界面上的分割线手柄。当前阶段只统一渲染，不在视图层重复实现布局数学。
+ */
+const resolveGuideStyle = (guide, cells, contentBox) => {
+  const g = Math.max(0, Math.round(gutterPx.value || 0))
+
+  switch (`${store.puzzleType}:${guide.controlKey}`) {
+    case 'p3:splitX': {
+      const leftCell = cells[0]
+      if (!leftCell) return null
+      return createVerticalGuideStyle({
+        x: leftCell.x + leftCell.w + g / 2,
+        top: contentBox.y,
+        height: contentBox.height,
+      })
+    }
+    case 'p3:splitY': {
+      const topRightCell = cells[1]
+      if (!topRightCell) return null
+      return createHorizontalGuideStyle({
+        left: topRightCell.x,
+        y: topRightCell.y + topRightCell.h + g / 2,
+        width: topRightCell.w,
+      })
+    }
+    case 'p4:splitX': {
+      const leftCell = cells[0]
+      if (!leftCell) return null
+      return createVerticalGuideStyle({
+        x: leftCell.x + leftCell.w + g / 2,
+        top: contentBox.y,
+        height: contentBox.height,
+      })
+    }
+    case 'p4:rightSplitY1': {
+      const topRightCell = cells[1]
+      if (!topRightCell) return null
+      return createHorizontalGuideStyle({
+        left: topRightCell.x,
+        y: topRightCell.y + topRightCell.h + g / 2,
+        width: topRightCell.w,
+      })
+    }
+    case 'p4:rightSplitY2': {
+      const midRightCell = cells[2]
+      if (!midRightCell) return null
+      return createHorizontalGuideStyle({
+        left: midRightCell.x,
+        y: midRightCell.y + midRightCell.h + g / 2,
+        width: midRightCell.w,
+      })
+    }
+    case 'p5:splitY': {
+      const topLeftCell = cells[0]
+      if (!topLeftCell) return null
+      return createHorizontalGuideStyle({
+        left: contentBox.x,
+        y: topLeftCell.y + topLeftCell.h + g / 2,
+        width: contentBox.width,
+      })
+    }
+    case 'p5:topSplitX': {
+      const topLeftCell = cells[0]
+      if (!topLeftCell) return null
+      return createVerticalGuideStyle({
+        x: topLeftCell.x + topLeftCell.w + g / 2,
+        top: topLeftCell.y,
+        height: topLeftCell.h,
+      })
+    }
+    case 'p5:bottomSplitX1': {
+      const bottomLeftCell = cells[2]
+      if (!bottomLeftCell) return null
+      return createVerticalGuideStyle({
+        x: bottomLeftCell.x + bottomLeftCell.w + g / 2,
+        top: bottomLeftCell.y,
+        height: bottomLeftCell.h,
+      })
+    }
+    case 'p5:bottomSplitX2': {
+      const bottomMidCell = cells[3]
+      if (!bottomMidCell) return null
+      return createVerticalGuideStyle({
+        x: bottomMidCell.x + bottomMidCell.w + g / 2,
+        top: bottomMidCell.y,
+        height: bottomMidCell.h,
+      })
+    }
+    case 'p6:splitX': {
+      const leftCell = cells[0]
+      if (!leftCell) return null
+      return createVerticalGuideStyle({
+        x: leftCell.x + leftCell.w + g / 2,
+        top: leftCell.y,
+        height: leftCell.h,
+      })
+    }
+    case 'p6:upperBottomY': {
+      const leftCell = cells[0]
+      if (!leftCell) return null
+      return createHorizontalGuideStyle({
+        left: contentBox.x,
+        y: leftCell.y + leftCell.h + g / 2,
+        width: contentBox.width,
+      })
+    }
+    case 'p6:rightSplitY': {
+      const topRightCell = cells[1]
+      if (!topRightCell) return null
+      return createHorizontalGuideStyle({
+        left: topRightCell.x,
+        y: topRightCell.y + topRightCell.h + g / 2,
+        width: topRightCell.w,
+      })
+    }
+    case 'p6:bottomSplitX1': {
+      const bottomLeftCell = cells[3]
+      if (!bottomLeftCell) return null
+      return createVerticalGuideStyle({
+        x: bottomLeftCell.x + bottomLeftCell.w + g / 2,
+        top: bottomLeftCell.y,
+        height: bottomLeftCell.h,
+      })
+    }
+    case 'p6:bottomSplitX2': {
+      const bottomMidCell = cells[4]
+      if (!bottomMidCell) return null
+      return createVerticalGuideStyle({
+        x: bottomMidCell.x + bottomMidCell.w + g / 2,
+        top: bottomMidCell.y,
+        height: bottomMidCell.h,
+      })
+    }
+    default:
+      return null
   }
+}
+
+const renderedGuides = computed(() => {
+  const layout = currentCells.value
+  const cells = layout?.cells || []
+  const contentBox = layout?.contentBox
+
+  if (!contentBox || cells.length === 0) {
+    return []
+  }
+
+  return currentGuideConfigs.value
+    .map((guide) => {
+      const style = resolveGuideStyle(guide, cells, contentBox)
+      if (!style) return null
+
+      const interactive = true
+      const isDragging = dragging.value.guideId === guide.id
+
+      return {
+        ...guide,
+        style,
+        interactive,
+        isDragging,
+        title: `拖动调整${guide.label}`,
+      }
+    })
+    .filter(Boolean)
 })
 
-// 右上槽位：绝对定位在右侧上方
-const topRightSlotStyle = computed(() => {
-  const { left, topRight } = imageSizes.value
-  return {
-    position: 'absolute',
-    left: `${left.width}px`,
-    top: '0',
-    width: `${topRight.width}px`,
-    height: `${topRight.height}px`
-  }
-})
+const SLOT_LABELS = {
+  p3_left: '左侧大图',
+  p3_topRight: '右上小图',
+  p3_bottomRight: '右下小图',
+  p4_left: '左侧大图',
+  p4_topRight: '右上小图',
+  p4_midRight: '右中小图',
+  p4_bottomRight: '右下小图',
+  p5_topLeft: '上左图',
+  p5_topRight: '上右图',
+  p5_bottomLeft: '下左图',
+  p5_bottomMid: '下中图',
+  p5_bottomRight: '下右图',
+  p6_left: '左侧大图',
+  p6_topRight: '右上小图',
+  p6_midRight: '右中小图',
+  p6_bottomLeft: '底左图',
+  p6_bottomMid: '底中图',
+  p6_bottomRight: '底右图',
+}
 
-// 右下槽位：绝对定位在右侧下方
-const bottomRightSlotStyle = computed(() => {
-  const { left, topRight, bottomRight } = imageSizes.value
-  return {
-    position: 'absolute',
-    left: `${left.width}px`,
-    top: `${topRight.height}px`,
-    width: `${bottomRight.width}px`,
-    height: `${bottomRight.height}px`
-  }
+const getSlotLabel = (slotId, index) => SLOT_LABELS[slotId] || `槽位${index + 1}`
+
+const renderedSlots = computed(() => {
+  const ids = slotIds.value
+  const cells = currentCells.value?.cells || []
+  return ids.map((slotId, index) => {
+    const cell = cells[index] || { x: 0, y: 0, w: 0, h: 0 }
+    const materialId = store.getSlotMaterialId(slotId)
+    return {
+      slotId,
+      materialId,
+      label: getSlotLabel(slotId, index),
+      style: {
+        position: 'absolute',
+        left: `${cell.x}px`,
+        top: `${cell.y}px`,
+        width: `${cell.w}px`,
+        height: `${cell.h}px`,
+      },
+    }
+  })
 })
 
 // 方法：根据素材 ID 获取预览 URL
@@ -1143,12 +1334,7 @@ const handleDrop = (event, slot) => {
 
 // 辅助方法：获取槽位中文名称
 const getSlotName = (slot) => {
-  const slotNames = {
-    left: '左侧大图',
-    topRight: '右上小图',
-    bottomRight: '右下小图'
-  }
-  return slotNames[slot] || slot
+  return SLOT_LABELS[slot] || slot
 }
 
 /**
@@ -1164,17 +1350,17 @@ const handleLeftWidthChange = (newWidth) => {
   
   console.log('📐 [输入框] 左侧宽度已更新:', newWidth, 'px')
   console.log('  - 新的 splitX:', store.layoutRatios.splitX.toFixed(4))
-  console.log('  - 右侧宽度（自动计算）:', imageSizes.value.topRight.width, 'px')
+  console.log('  - 右侧宽度（自动计算）:', imageSizes.value.p3_topRight.width, 'px')
 }
 
 /**
  * 方法：左侧高度改变时的处理
- * 注意：左侧高度应该等于画布总尺寸（1:1），所以修改左侧高度实际上应该修改画布总尺寸
+ * 说明：左侧主图高度始终跟随画布高度，因此修改该输入框等价于修改画布基准尺寸
  */
 const handleLeftHeightChange = (newHeight) => {
   if (!newHeight || newHeight < 200) return
   
-  // 左侧高度应该等于画布总尺寸，所以修改画布总尺寸
+  // 左侧主图高度跟随画布高度，所以这里直接更新画布基准尺寸
   store.updateCanvasSize(newHeight)
   
   console.log('📐 [输入框] 左侧高度已更新（实际更新画布总尺寸）:', newHeight, 'px')
@@ -1193,7 +1379,7 @@ const handleTopRightHeightChange = (newHeight) => {
   
   console.log('📐 [输入框] 右上高度已更新:', newHeight, 'px')
   console.log('  - 新的 splitY:', store.layoutRatios.splitY.toFixed(4))
-  console.log('  - 右下高度（自动计算）:', imageSizes.value.bottomRight.height, 'px')
+  console.log('  - 右下高度（自动计算）:', imageSizes.value.p3_bottomRight.height, 'px')
 }
 
 /**
@@ -1222,387 +1408,85 @@ const handleResetSizes = () => {
   console.log('🔄 [尺寸调整] 已重置为默认尺寸')
 }
 
-/**
- * 方法：开始纵向拖动（调整左右宽度）- 使用比例系统
- * 当用户按下纵向分割线时触发
- */
-const startVerticalDrag = (e) => {
-  // 获取画布网格的实际位置（考虑缩放）
+const handleGuideMouseDown = (event, guide) => {
+  if (!guide?.controlKey || !guide?.orientation) {
+    event.preventDefault()
+    event.stopPropagation()
+    return
+  }
+
   if (!canvasGrid.value) {
     console.warn('⚠️ [分割线] 画布网格引用不存在')
     return
   }
-  
+
+  const currentControls = store.getLayoutControls(store.puzzleType) || {}
+  const currentRatio = Number(currentControls[guide.controlKey])
   const canvasRect = canvasGrid.value.getBoundingClientRect()
-  
-  // 记录拖动开始时的状态（使用比例系统）
+
   dragging.value = {
-    type: 'vertical',
-    startX: e.clientX,  // 屏幕坐标X
-    startY: e.clientY,  // 屏幕坐标Y
-    startSplitX: store.layoutRatios.splitX,  // ✅ 记录当前的比例值
-    canvasRect: canvasRect  // ✅ 记录画布位置信息
+    guideId: guide.id,
+    orientation: guide.orientation,
+    controlKey: guide.controlKey,
+    startRatio: Number.isFinite(currentRatio) ? currentRatio : 0.5,
+    canvasRect,
   }
-  
-  // 添加全局事件监听（使用 window，确保鼠标移出也能继续拖动）
-  window.addEventListener('mousemove', handleVerticalDrag)
-  window.addEventListener('mouseup', stopVerticalDrag)
-  
-  // 防止选中文本和默认行为
-  e.preventDefault()
-  e.stopPropagation()
-  
-  console.log('🎯 [分割线] 开始纵向拖动，当前 splitX:', dragging.value.startSplitX.toFixed(4))
+
+  window.addEventListener('mousemove', handleGuideDrag)
+  window.addEventListener('mouseup', stopGuideDrag)
+
+  event.preventDefault()
+  event.stopPropagation()
+
+  console.log(`🎯 [分割线] 开始拖动 ${guide.id}，起始比例=${dragging.value.startRatio.toFixed(4)}`)
 }
 
+const clampRatio = (value) => Math.min(1, Math.max(0, value))
+const SNAP_THRESHOLD = 0.02
+const SNAP_TARGET = 0.5
+
+const shouldSnapToHalf = (controlKey) => ['splitX', 'splitY'].includes(controlKey)
+
 /**
- * 方法：处理纵向拖动（实时更新左右宽度）- 使用比例系统
- * 当用户拖动纵向分割线时持续触发
- * 
- * 核心思路：
- * 1. 计算鼠标在画布中的相对位置（0.0-1.0）
- * 2. 这个相对位置就是新的 splitX 比例值
- * 3. 使用 Store 的更新方法，自动处理边界限制
- * 4. 添加吸附功能，当接近 0.5 时自动吸附
+ * 术语 = 通用 guide 拖拽
+ * 具体含义：视图层只把鼠标位置转换成比例，然后调用 store.updateLayoutControl()。
+ * 比例合法化、最小尺寸和顺序约束统一由 store/puzzleLayout 执行。
  */
-const handleVerticalDrag = (e) => {
-  if (dragging.value.type !== 'vertical') return
-  
-  // 获取画布位置信息（使用拖动开始时保存的位置，避免频繁获取）
-  const canvasRect = dragging.value.canvasRect
-  if (!canvasRect) {
-    console.warn('⚠️ [分割线] 画布位置信息不存在')
-    return
+const handleGuideDrag = (event) => {
+  const { orientation, controlKey, canvasRect, startRatio } = dragging.value
+  if (!orientation || !controlKey || !canvasRect) return
+
+  const axisValue = orientation === 'vertical'
+    ? (event.clientX - canvasRect.left) / canvasRect.width
+    : (event.clientY - canvasRect.top) / canvasRect.height
+
+  let nextRatio = clampRatio(axisValue)
+  if (shouldSnapToHalf(controlKey) && Math.abs(nextRatio - SNAP_TARGET) < SNAP_THRESHOLD) {
+    nextRatio = SNAP_TARGET
   }
-  
-  // 计算鼠标在画布中的相对位置（0.0-1.0）
-  // 这是核心：相对位置 = (鼠标X - 画布左边界) / 画布宽度
-  const relativeX = (e.clientX - canvasRect.left) / canvasRect.width
-  
-  // 限制范围：0.1 - 0.9（确保左右两侧都至少有10%的空间）
-  // 注意：Store 的更新方法会进一步限制为最小100px，这里只是初步限制
-  let newSplitX = Math.max(0.1, Math.min(0.9, relativeX))
-  
-  // ✅ 添加吸附功能：当接近 0.5（50%）时自动吸附
-  // 阈值：2%（0.02）
-  const SNAP_THRESHOLD = 0.02
-  if (Math.abs(newSplitX - 0.5) < SNAP_THRESHOLD) {
-    newSplitX = 0.5
-    console.log('🧲 [分割线] 吸附到 0.5（50%）')
-  }
-  
-  // 使用 Store 的更新方法，从左侧宽度反向计算 splitX
-  // 注意：updateSplitXFromLeftWidth 接收的是像素值，所以需要先计算像素值
-  const canvasSize = store.layoutRatios.canvasSize
-  const newLeftWidth = newSplitX * canvasSize
-  
-  // 调用 Store 的更新方法（会自动处理边界限制和极端情况预防）
-  store.updateSplitXFromLeftWidth(newLeftWidth)
-  
-  // 实时日志（节流，避免输出过多）
-  // 只在 splitX 变化超过 0.01 时输出
-  const currentSplitX = store.layoutRatios.splitX
-  if (Math.abs(currentSplitX - dragging.value.startSplitX) > 0.01 || Math.abs(newSplitX - 0.5) < SNAP_THRESHOLD) {
-    const sizes = imageSizes.value
-    console.log(`📐 [分割线] 纵向拖动: splitX=${currentSplitX.toFixed(4)}, 左侧=${sizes.left.width}px, 右侧=${sizes.topRight.width}px`)
+
+  const normalized = store.updateLayoutControl(store.puzzleType, controlKey, nextRatio)
+  const latestRatio = normalized?.[controlKey]
+
+  if (typeof latestRatio === 'number' && Math.abs(latestRatio - startRatio) > 0.005) {
+    console.log(`📐 [分割线] ${controlKey}=${latestRatio.toFixed(4)} (${store.puzzleType})`)
   }
 }
 
-/**
- * 方法：开始横向拖动（调整右上右下高度）- 使用比例系统
- * 当用户按下横向分割线时触发
- */
-const startHorizontalDrag = (e) => {
-  // 获取画布网格的实际位置（考虑缩放）
-  if (!canvasGrid.value) {
-    console.warn('⚠️ [分割线] 画布网格引用不存在')
-    return
-  }
-  
-  const canvasRect = canvasGrid.value.getBoundingClientRect()
-  
-  // 记录拖动开始时的状态（使用比例系统）
+const stopGuideDrag = () => {
+  if (!dragging.value.guideId) return
+
+  console.log(`✅ [分割线] 拖动结束 ${dragging.value.guideId}`)
+
+  window.removeEventListener('mousemove', handleGuideDrag)
+  window.removeEventListener('mouseup', stopGuideDrag)
+
   dragging.value = {
-    type: 'horizontal',
-    startX: e.clientX,  // 屏幕坐标X
-    startY: e.clientY,  // 屏幕坐标Y
-    startSplitY: store.layoutRatios.splitY,  // ✅ 记录当前的比例值
-    canvasRect: canvasRect  // ✅ 记录画布位置信息
-  }
-  
-  // 添加全局事件监听（使用 window，确保鼠标移出也能继续拖动）
-  window.addEventListener('mousemove', handleHorizontalDrag)
-  window.addEventListener('mouseup', stopHorizontalDrag)
-  
-  // 防止选中文本和默认行为
-  e.preventDefault()
-  e.stopPropagation()
-  
-  console.log('🎯 [分割线] 开始横向拖动，当前 splitY:', dragging.value.startSplitY.toFixed(4))
-}
-
-/**
- * 方法：处理横向拖动（实时更新右上右下高度）- 使用比例系统
- * 当用户拖动横向分割线时持续触发
- * 
- * 核心思路：
- * 1. 计算鼠标在画布中的相对位置（0.0-1.0）
- * 2. 这个相对位置就是新的 splitY 比例值
- * 3. 使用 Store 的更新方法，自动处理边界限制
- * 4. 添加吸附功能，当接近 0.5 时自动吸附
- */
-const handleHorizontalDrag = (e) => {
-  if (dragging.value.type !== 'horizontal') return
-  
-  // 获取画布位置信息（使用拖动开始时保存的位置，避免频繁获取）
-  const canvasRect = dragging.value.canvasRect
-  if (!canvasRect) {
-    console.warn('⚠️ [分割线] 画布位置信息不存在')
-    return
-  }
-  
-  // 计算鼠标在画布中的相对位置（0.0-1.0）
-  // 这是核心：相对位置 = (鼠标Y - 画布上边界) / 画布高度
-  const relativeY = (e.clientY - canvasRect.top) / canvasRect.height
-  
-  // 限制范围：0.1 - 0.9（确保右上和右下都至少有10%的空间）
-  // 注意：Store 的更新方法会进一步限制为最小100px，这里只是初步限制
-  let newSplitY = Math.max(0.1, Math.min(0.9, relativeY))
-  
-  // ✅ 添加吸附功能：当接近 0.5（50%）时自动吸附
-  // 阈值：2%（0.02）
-  const SNAP_THRESHOLD = 0.02
-  if (Math.abs(newSplitY - 0.5) < SNAP_THRESHOLD) {
-    newSplitY = 0.5
-    console.log('🧲 [分割线] 吸附到 0.5（50%）')
-  }
-  
-  // 使用 Store 的更新方法，从右上高度反向计算 splitY
-  // 注意：updateSplitYFromTopRightHeight 接收的是像素值，所以需要先计算像素值
-  const canvasSize = store.layoutRatios.canvasSize
-  const newTopRightHeight = newSplitY * canvasSize
-  
-  // 调用 Store 的更新方法（会自动处理边界限制和极端情况预防）
-  store.updateSplitYFromTopRightHeight(newTopRightHeight)
-  
-  // 实时日志（节流，避免输出过多）
-  // 只在 splitY 变化超过 0.01 时输出
-  const currentSplitY = store.layoutRatios.splitY
-  if (Math.abs(currentSplitY - dragging.value.startSplitY) > 0.01 || Math.abs(newSplitY - 0.5) < SNAP_THRESHOLD) {
-    const sizes = imageSizes.value
-    console.log(`📐 [分割线] 横向拖动: splitY=${currentSplitY.toFixed(4)}, 右上=${sizes.topRight.height}px, 右下=${sizes.bottomRight.height}px`)
-  }
-}
-
-/**
- * 方法：停止拖动（纵向和横向共用）- 使用比例系统
- * 当用户释放鼠标时触发
- * 
- * 注意：使用比例系统后，不需要调用 adjustRightSizesForSquare
- * 因为比例系统本身就保证了1:1，像素值由计算属性自动计算
- */
-const stopVerticalDrag = () => {
-  if (dragging.value.type === 'vertical') {
-    console.log('✅ [分割线] 纵向拖动结束')
-    
-    // 使用比例系统后，不需要调用自动调整
-    // 因为比例系统本身就保证了1:1，像素值由计算属性自动计算
-    
-    dragging.value.type = null
-    dragging.value.canvasRect = null  // 清理画布位置信息
-    
-    // 移除全局事件监听（使用 window）
-    window.removeEventListener('mousemove', handleVerticalDrag)
-    window.removeEventListener('mouseup', stopVerticalDrag)
-  }
-}
-
-const stopHorizontalDrag = () => {
-  if (dragging.value.type === 'horizontal') {
-    console.log('✅ [分割线] 横向拖动结束')
-    
-    // 使用比例系统后，不需要调用自动调整
-    
-    dragging.value.type = null
-    dragging.value.canvasRect = null  // 清理画布位置信息
-    
-    // 移除全局事件监听（使用 window）
-    window.removeEventListener('mousemove', handleHorizontalDrag)
-    window.removeEventListener('mouseup', stopHorizontalDrag)
-  }
-}
-
-// 方法：生成拼接图片
-const handleGenerate = async () => {
-  // 检查画布是否已填满
-  if (!store.isCanvasComplete()) {
-    ElMessage.warning('请先填充所有三个槽位（左侧大图、右上小图、右下小图）')
-    return
-  }
-  
-  // 获取三个槽位的素材（使用新的方法获取 materialId）
-  const leftMaterialId = store.getSlotMaterialId('left')
-  const topRightMaterialId = store.getSlotMaterialId('topRight')
-  const bottomRightMaterialId = store.getSlotMaterialId('bottomRight')
-  
-  const leftMaterial = store.getMaterialById(leftMaterialId)
-  const topRightMaterial = store.getMaterialById(topRightMaterialId)
-  const bottomRightMaterial = store.getMaterialById(bottomRightMaterialId)
-  
-  if (!leftMaterial || !topRightMaterial || !bottomRightMaterial) {
-    ElMessage.error('素材数据不完整，请重新拖拽图片到对应的槽位')
-    return
-  }
-  
-  // 详细的数据完整性检查
-  // 检查每个素材是否包含必要的字段
-  const requiredFields = ['localPath', 'previewUrl']
-  const missingFields = []
-  
-  if (!leftMaterial.localPath || !leftMaterial.previewUrl) {
-    missingFields.push('左侧大图')
-  }
-  if (!topRightMaterial.localPath || !topRightMaterial.previewUrl) {
-    missingFields.push('右上小图')
-  }
-  if (!bottomRightMaterial.localPath || !bottomRightMaterial.previewUrl) {
-    missingFields.push('右下小图')
-  }
-  
-  if (missingFields.length > 0) {
-    ElMessage.error(`以下槽位的素材数据不完整：${missingFields.join('、')}，请重新添加素材`)
-    return
-  }
-
-  // 防止重复提交
-  if (generating.value) {
-    ElMessage.warning('正在生成中，请稍候...')
-    return
-  }
-  
-  generating.value = true
-  resultImageUrl.value = '' // 清空之前的结果
-  
-  try {
-    console.log('🎨 [生成] 开始生成拼接图片...')
-    console.log('🎨 [生成] 左侧图片:', leftMaterial.localPath)
-    console.log('🎨 [生成] 右上图片:', topRightMaterial.localPath)
-    console.log('🎨 [生成] 右下图片:', bottomRightMaterial.localPath)
-    
-    // 确保尺寸是1:1正方形（在生成前自动调整）
-    // 使用 getAdjustedSizesForSquare() 获取调整后的尺寸，确保1:1
-    const adjustedSizes = store.getAdjustedSizesForSquare()
-    
-    // 使用调整后的尺寸
-    const currentSizes = adjustedSizes
-    console.log('📐 [生成] 当前尺寸配置（已调整为1:1正方形）:')
-    console.log('  - 左侧:', `${currentSizes.left.width} × ${currentSizes.left.height} 像素`)
-    console.log('  - 右上:', `${currentSizes.topRight.width} × ${currentSizes.topRight.height} 像素`)
-    console.log('  - 右下:', `${currentSizes.bottomRight.width} × ${currentSizes.bottomRight.height} 像素`)
-    
-    // 构建请求体（使用调整后的尺寸，确保1:1正方形）
-    const requestBody = {
-      // 图片路径参数
-      left: leftMaterial.localPath,
-      topRight: topRightMaterial.localPath,
-      bottomRight: bottomRightMaterial.localPath,
-      // 尺寸参数：传递调整后的尺寸配置（确保1:1正方形）
-      leftSize: {
-        width: currentSizes.left.width,
-        height: currentSizes.left.height
-      },
-      topRightSize: {
-        width: currentSizes.topRight.width,
-        height: currentSizes.topRight.height
-      },
-      bottomRightSize: {
-        width: currentSizes.bottomRight.width,
-        height: currentSizes.bottomRight.height
-      }
-    }
-    
-    // 调试：输出完整的请求体
-    console.log('📤 [生成] 发送的请求体:', JSON.stringify(requestBody, null, 2))
-    
-    // 调用 Python 拼接接口
-    // 注意：通过 API 网关代理到 Python 服务
-    // 设置较长的超时时间，因为图片处理可能需要较长时间
-    // 传递尺寸参数，让后端根据用户设置的尺寸进行动态拼接
-    const response = await axios.post('/api/video-generation/api/process/stitch', requestBody, {
-      timeout: 120000 // 120秒超时（图片处理可能需要较长时间）
-    })
-    
-    if (response.data && response.data.success) {
-      const { imageUrl, localPath, filename } = response.data
-      
-      // 使用相对路径（通过 Vite 代理访问）
-      resultImageUrl.value = localPath
-      
-      // 获取1:1正方形画布尺寸（用于验证）
-      const expectedCanvasSize = store.getCanvasSizeSquare()
-      
-      // 重置尺寸信息（图片加载后会更新）
-      resultImageSize.value = { width: 0, height: 0 }
-      
-      // 输出尺寸信息到控制台（用于验证）
-      console.log('✅ [生成] 拼接成功:', localPath)
-      console.log('📐 [生成] 使用的尺寸配置（1:1正方形）:')
-      console.log('  - 左侧:', `${currentSizes.left.width} × ${currentSizes.left.height} 像素`)
-      console.log('  - 右上:', `${currentSizes.topRight.width} × ${currentSizes.topRight.height} 像素`)
-      console.log('  - 右下:', `${currentSizes.bottomRight.width} × ${currentSizes.bottomRight.height} 像素`)
-      console.log('📐 [生成] 预期画布尺寸（1:1正方形）:', `${expectedCanvasSize.width} × ${expectedCanvasSize.height} 像素`)
-      console.log('📐 [生成] 提示：图片加载完成后会显示实际尺寸，请查看生成结果区域的尺寸信息')
-      
-      ElMessage.success(`图片拼接成功！已生成：${filename || '拼接图片'}`)
-    } else {
-      throw new Error(response.data?.error || '生成失败')
-    }
-  } catch (error) {
-    console.error('❌ [生成] 拼接失败:', error)
-    
-    // 详细的错误处理
-    let errorMessage = '生成失败'
-    let errorDescription = ''
-    
-    if (error.code === 'ECONNABORTED' || error.message.includes('timeout')) {
-      // 请求超时
-      errorMessage = '生成超时'
-      errorDescription = '图片处理时间过长，可能是图片太大或服务器繁忙，请稍后重试'
-    } else if (error.code === 'ECONNREFUSED' || error.code === 'ERR_NETWORK') {
-      // 网络连接错误
-      errorMessage = '无法连接到服务器'
-      errorDescription = '请检查网络连接，确保 Python 服务正在运行'
-    } else if (error.response) {
-      // HTTP 错误响应
-      const status = error.response.status
-      const data = error.response.data
-      
-      if (status === 400) {
-        errorMessage = '请求参数错误'
-        errorDescription = data?.error || '请检查图片路径是否正确'
-      } else if (status === 404) {
-        errorMessage = '图片文件不存在'
-        errorDescription = data?.error || '无法找到指定的图片文件，请重新添加素材'
-      } else if (status === 500) {
-        errorMessage = '服务器处理错误'
-        errorDescription = data?.error || '图片拼接过程中出错，请检查图片格式或稍后重试'
-      } else {
-        errorMessage = `HTTP 错误 ${status}`
-        errorDescription = data?.error || '请求失败，请稍后重试'
-      }
-    } else if (error.message) {
-      // 其他错误
-      errorMessage = '生成失败'
-      errorDescription = error.message
-    }
-    
-    // 显示错误消息（合并详细描述）
-    const fullErrorMessage = errorDescription 
-      ? `${errorMessage}：${errorDescription}` 
-      : errorMessage
-    ElMessage.error(fullErrorMessage)
-  } finally {
-    generating.value = false
+    guideId: null,
+    orientation: null,
+    controlKey: null,
+    startRatio: 0,
+    canvasRect: null,
   }
 }
 
@@ -1627,22 +1511,21 @@ const getGenerateButtonText = () => {
 const handleGenerateAndUpload = async () => {
   // 检查画布是否已填满
   if (!store.isCanvasComplete()) {
-    ElMessage.warning('请先填充所有三个槽位（左侧大图、右上小图、右下小图）')
+    ElMessage.warning(`请先填充所有 ${pieceCount.value} 个槽位`)
     return
   }
   
-  // 获取三个槽位的素材
-  const leftMaterialId = store.getSlotMaterialId('left')
-  const topRightMaterialId = store.getSlotMaterialId('topRight')
-  const bottomRightMaterialId = store.getSlotMaterialId('bottomRight')
-  
-  const leftMaterial = store.getMaterialById(leftMaterialId)
-  const topRightMaterial = store.getMaterialById(topRightMaterialId)
-  const bottomRightMaterial = store.getMaterialById(bottomRightMaterialId)
-  
-  if (!leftMaterial || !topRightMaterial || !bottomRightMaterial) {
-    ElMessage.error('素材数据不完整，请重新拖拽图片到对应的槽位')
-    return
+  // 获取所有槽位的素材路径（按 slotIds 顺序）
+  const ids = slotIds.value
+  const imagePaths = []
+  for (const id of ids) {
+    const mid = store.getSlotMaterialId(id)
+    const mat = store.getMaterialById(mid)
+    if (!mat) {
+      ElMessage.error('素材数据不完整，请重新拖拽图片到对应的槽位')
+      return
+    }
+    imagePaths.push(mat.localPath)
   }
   
   // 防止重复提交
@@ -1652,33 +1535,14 @@ const handleGenerateAndUpload = async () => {
   }
   
   generating.value = true
-  resultImageUrl.value = '' // 清空之前的结果
-  externalImageUrl.value = '' // 清空之前的外链 URL
+  resultImageUrl.value = ''
+  externalImageUrl.value = ''
   
   try {
-    // ========== 第一步：生成拼接图片 ==========
-    console.log('🎨 [生成并上传] 第一步：开始生成拼接图片...')
+    // ========== 第一步：生成拼接图片（V2 协议） ==========
+    console.log('[生成并上传] 第一步：V2 拼接请求')
     
-    const adjustedSizes = store.getAdjustedSizesForSquare()
-    const currentSizes = adjustedSizes
-    
-    const requestBody = {
-      left: leftMaterial.localPath,
-      topRight: topRightMaterial.localPath,
-      bottomRight: bottomRightMaterial.localPath,
-      leftSize: {
-        width: currentSizes.left.width,
-        height: currentSizes.left.height
-      },
-      topRightSize: {
-        width: currentSizes.topRight.width,
-        height: currentSizes.topRight.height
-      },
-      bottomRightSize: {
-        width: currentSizes.bottomRight.width,
-        height: currentSizes.bottomRight.height
-      }
-    }
+    const requestBody = store.buildStitchRequestPayload(imagePaths)
     
     const response = await axios.post('/api/video-generation/api/process/stitch', requestBody, {
       timeout: 120000
@@ -1835,8 +1699,8 @@ const handleResultImageLoad = (event) => {
     height: actualHeight
   }
   
-  // 获取预期尺寸（1:1正方形，用于对比验证）
-  const expectedSize = store.getCanvasSizeSquare()
+  // 获取预期尺寸（当前 puzzleType/aspectRatio 的实际画布尺寸）
+  const expectedSize = store.getCanvasPixels()
   
   // 输出尺寸信息到控制台（用于验证）
   console.log('📐 [验证] 图片实际尺寸:', `${actualWidth} × ${actualHeight} 像素`)
@@ -1991,7 +1855,7 @@ const handleUploadToExternal = async () => {
 
 /**
  * 同步外链到广告投放页面（新增功能）
- * 在外链上传成功后，将外链和3张图片的商品信息同步到广告投放页面
+ * 在外链上传成功后，将外链、图片链接、商品信息与当前拼图 N 一并同步到广告投放页面
  * 
  * @param {string} externalLink - 外链URL
  */
@@ -2001,61 +1865,54 @@ const syncExternalLinkToAdCampaign = async (externalLink) => {
     const { useAdCampaignStore } = await import('@/stores/adCampaign')
     const adCampaignStore = useAdCampaignStore()
     
-    // 检查是否在拼图对齐模式下（只有在这个模式下才同步）
-    if (adCampaignStore.workflowMode !== 'stitch_sync') {
-      console.log('ℹ️ [同步] 当前为标准模式，跳过外链同步')
-      return
-    }
-    
     // 获取所有槽位的商品信息
     const productInfoList = store.getAllSlotsProductInfo()
     
     // 检查是否有商品信息
     if (productInfoList.length === 0) {
-      console.warn('⚠️ [同步] 没有找到商品信息，无法同步外链')
+      console.warn('[同步] 没有找到商品信息，无法同步外链')
       ElMessage.warning('未找到商品信息，外链未同步到广告投放页面。请先导入Excel或确保素材已关联商品信息。')
       return
     }
     
-    // 检查是否有3个商品信息（拼图需要3张图片）
-    if (productInfoList.length !== 3) {
-      console.warn(`⚠️ [同步] 商品信息数量不完整：期望3个，实际${productInfoList.length}个`)
-      ElMessage.warning(`商品信息不完整（${productInfoList.length}/3），外链未同步。请确保3张图片都已关联商品信息。`)
+    // 检查商品信息数量是否与拼图类型匹配
+    const N = pieceCount.value
+    if (productInfoList.length !== N) {
+      console.warn(`[同步] 商品信息数量不完整：期望${N}个，实际${productInfoList.length}个`)
+      ElMessage.warning(`商品信息不完整（${productInfoList.length}/${N}），外链未同步。请确保${N}张图片都已关联商品信息。`)
       return
     }
     
-    // 获取3个槽位的素材，用于获取图片链接
-    const leftMaterialId = store.getSlotMaterialId('left')
-    const topRightMaterialId = store.getSlotMaterialId('topRight')
-    const bottomRightMaterialId = store.getSlotMaterialId('bottomRight')
+    // 构建图片链接数组（按 slotIds 顺序）
+    const ids = slotIds.value
+    const imageLinks = ids
+      .map((id) => {
+        const mid = store.getSlotMaterialId(id)
+        const material = store.getMaterialById(mid)
+        return {
+          link: material?.originalUrl || material?.publicUrl || '',
+          productInfo: store.getSlotProductInfo(id),
+        }
+      })
+      .filter((item) => item.link)
+
+    // 调用 store 方法添加外链，并把当前拼图 N 一并传过去用于自动切模式
+    const synced = await adCampaignStore.addExternalLink(externalLink, imageLinks, {
+      pieceCount: N,
+      stitchRatio: `${N}:1`,
+      puzzleType: store.puzzleType,
+    })
+
+    if (!synced) {
+      console.log('[同步] 外链同步已取消或被去重拦截')
+      return
+    }
     
-    const leftMaterial = store.getMaterialById(leftMaterialId)
-    const topRightMaterial = store.getMaterialById(topRightMaterialId)
-    const bottomRightMaterial = store.getMaterialById(bottomRightMaterialId)
-    
-    // 构建图片链接数组（包含商品信息）
-    const imageLinks = [
-      {
-        link: leftMaterial?.originalUrl || leftMaterial?.publicUrl || '',
-        productInfo: store.getSlotProductInfo('left')
-      },
-      {
-        link: topRightMaterial?.originalUrl || topRightMaterial?.publicUrl || '',
-        productInfo: store.getSlotProductInfo('topRight')
-      },
-      {
-        link: bottomRightMaterial?.originalUrl || bottomRightMaterial?.publicUrl || '',
-        productInfo: store.getSlotProductInfo('bottomRight')
-      }
-    ].filter(item => item.link) // 过滤掉空的链接
-    
-    // 调用 store 方法添加外链（会自动去重和智能切换）
-    adCampaignStore.addExternalLink(externalLink, imageLinks)
-    
-    console.log('✅ [同步] 外链已同步到广告投放页面:', {
+    console.log('[同步] 外链已同步:', {
       externalLink,
       productCount: productInfoList.length,
-      imageCount: imageLinks.length
+      imageCount: imageLinks.length,
+      stitchRatio: `${N}:1`,
     })
     
     ElMessage.success('外链已同步到广告投放页面！')
@@ -2176,13 +2033,9 @@ onMounted(() => {
 // 组件卸载时的清理
 onUnmounted(() => {
   // 清理拖动事件监听器（防止内存泄漏）- 使用 window
-  if (dragging.value.type === 'vertical') {
-    window.removeEventListener('mousemove', handleVerticalDrag)
-    window.removeEventListener('mouseup', stopVerticalDrag)
-  }
-  if (dragging.value.type === 'horizontal') {
-    window.removeEventListener('mousemove', handleHorizontalDrag)
-    window.removeEventListener('mouseup', stopHorizontalDrag)
+  if (dragging.value.guideId) {
+    window.removeEventListener('mousemove', handleGuideDrag)
+    window.removeEventListener('mouseup', stopGuideDrag)
   }
   console.log('📸 [ImageStitch] 图片拼接页面已卸载，事件监听器已清理')
 })
@@ -2434,6 +2287,17 @@ onUnmounted(() => {
   transition: all 0.1s ease; /* ✅ 优化：添加快速过渡动画，让拖动效果更流畅 */
 }
 
+.divider-disabled {
+  opacity: 0.7;
+  cursor: default;
+}
+
+.divider-disabled:hover {
+  background-color: rgba(64, 158, 255, 0.4);
+  box-shadow: none;
+  transform: none;
+}
+
 /* 分割线手柄（更明显的视觉提示，方便用户识别和拖动） */
 .divider-handle {
   position: absolute;
@@ -2473,6 +2337,12 @@ onUnmounted(() => {
   background-color: rgba(64, 158, 255, 1);
   box-shadow: 0 0 16px rgba(64, 158, 255, 0.9); /* ✅ 优化：增强光晕效果（从 12px 0.8 提升到 16px 0.9） */
   transform: translate(-50%, -50%) scale(1.2); /* ✅ 优化：拖动时进一步放大 */
+}
+
+.divider-disabled:hover .divider-handle {
+  background-color: rgba(64, 158, 255, 0.9);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  transform: translate(-50%, -50%);
 }
 
 /* 素材区样式 */

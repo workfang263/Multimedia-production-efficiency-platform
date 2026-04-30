@@ -348,6 +348,7 @@
 
 <script setup>
 import { onMounted, onBeforeUnmount, ref, computed } from 'vue'
+import { getSessionId, SESSION_KEY } from '@/utils/session'
 
 // ========== 常用音乐列表配置（数据驱动） ==========
 // 定义包含所有常用音乐的响应式数组
@@ -646,33 +647,8 @@ function initSyncFeature() {
     }
 }
 
-// 生成/获取持久化的会话ID
-const SESSION_KEY = 'x-session-id'
-
-function generateSessionId() {
-    const randomPart = Math.random().toString(36).slice(2)
-    const timePart = Date.now().toString(36)
-    return `sid_${randomPart}_${timePart}`
-}
-
-function getSessionId() {
-    try {
-        let sid = localStorage.getItem(SESSION_KEY)
-        if (!sid || typeof sid !== 'string' || !sid.startsWith('sid_')) {
-            sid = generateSessionId()
-            localStorage.setItem(SESSION_KEY, sid)
-            console.log('🆔 [VideoGeneration] 生成新的会话ID:', sid)
-        }
-        return sid
-    } catch (e) {
-        // 如果localStorage不可用，使用内存缓存或临时生成
-        if (!window.__fallbackSessionId) {
-            window.__fallbackSessionId = generateSessionId()
-            console.log('🆔 [VideoGeneration] 使用临时会话ID:', window.__fallbackSessionId)
-        }
-        return window.__fallbackSessionId
-    }
-}
+// 会话 ID 已提取到 @/utils/session.js（与 ImageStitch、广告链共享）
+// 使用 import { getSessionId, SESSION_KEY } from '@/utils/session'
 
 function sessionHeaders(extra = {}) {
     return { 'x-session-id': getSessionId(), ...extra }
