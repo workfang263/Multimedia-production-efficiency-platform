@@ -20,6 +20,7 @@ import time
 from flask import Flask, render_template, request, jsonify, send_file, url_for, session
 from werkzeug.utils import secure_filename
 import shutil
+import json
 from PIL import Image, ImageOps
 
 # 添加目录到路径，以便导入 video_generator（已随仓库放在 vendor/ffmpeg，也可用环境变量覆盖）
@@ -1252,37 +1253,170 @@ def delete_image():
     else:
         return jsonify({"error": "File not found"}), 404
 
+# ========== V2 协议常量和辅助函数 ==========
+
+# V2 协议字段（任一存在即视为 V2 请求）
+_V2_FIELDS = {'puzzleType', 'aspectRatio', 'gutterPx', 'cells', 'canvas'}
+
+# stitch 校验错误前缀（仅用于 V2 协议，禁止用于网关表格对齐）
+_STITCH_ERR_PREFIX = '[STITCH_CELL_INVALID]'
+
+_MAX_DIGEST_LEN = 200
+
+# 与前端 constants.js / puzzleLayout.js 共用常量：画布最大尺寸（像素）
+# 前端 DEFAULT_CANVAS_SIZE 为默认值，MAX_CANVAS_DIMENSION 为硬上限
+MAX_CANVAS_DIMENSION = 2000
+
+
+def _is_legacy_p3_payload(body):
+    """判定是否为旧版三拼请求：不含任何 V2 协议字段。"""
+    if not isinstance(body, dict):
+        return True
+    return not any(k in body for k in _V2_FIELDS)
+
+
+def _sanitize_path(path_str):
+    """脱敏图片路径：仅保留最后一段文件名或 hash 后缀。"""
+    if not isinstance(path_str, str):
+        return str(path_str)
+    parts = path_str.replace('\\', '/').split('/')
+    return parts[-1] if parts else path_str
+
+
+def _make_request_digest(body):
+    """生成请求体脱敏摘要（≤200 字符），路径字段脱敏。"""
+    import copy
+    try:
+        safe = copy.deepcopy(body)
+        # 脱敏 images 数组中的路径
+        if isinstance(safe, dict) and 'images' in safe and isinstance(safe['images'], list):
+            safe['images'] = [_sanitize_path(p) for p in safe['images']]
+    except Exception:
+        safe = body
+    text = json.dumps(safe, ensure_ascii=False)
+    return text[:_MAX_DIGEST_LEN]
+
+
+def _validate_v2_cells(data):
+    """
+    V2 协议校验：canvas / images / cells 必填、整数、不越界。
+    校验通过返回 (True, None)，失败返回 (False, error_message)。
+    注意：此阶段禁止 Image.open —— 仅做几何校验。
+    """
+    canvas = data.get('canvas')
+    if not isinstance(canvas, dict):
+        return False, 'canvas 缺失或格式错误'
+    cw = canvas.get('width')
+    ch = canvas.get('height')
+    if not (isinstance(cw, (int, float)) and isinstance(ch, (int, float))):
+        return False, 'canvas.width/height 缺失或非数字'
+    cw = int(cw)
+    ch = int(ch)
+    if cw <= 0 or ch <= 0:
+        return False, f'canvas 尺寸非法: {cw}×{ch}'
+    if cw > MAX_CANVAS_DIMENSION or ch > MAX_CANVAS_DIMENSION:
+        return False, f'canvas 尺寸超过上限 {MAX_CANVAS_DIMENSION}px: {cw}×{ch}'
+
+    images = data.get('images')
+    if not isinstance(images, list) or len(images) == 0:
+        return False, 'images 缺失或为空数组'
+
+    cells = data.get('cells')
+    if not isinstance(cells, list):
+        return False, 'cells 缺失或非数组'
+
+    if len(cells) != len(images):
+        return False, f'cells 数量({len(cells)})与 images 数量({len(images)})不匹配'
+
+    for i, cell in enumerate(cells):
+        if not isinstance(cell, dict):
+            return False, f'cells[{i}] 非字典类型'
+        x = cell.get('x')
+        y = cell.get('y')
+        w = cell.get('w')
+        h = cell.get('h')
+        if not all(isinstance(v, (int, float)) for v in [x, y, w, h]):
+            return False, f'cells[{i}] 坐标/尺寸非数字'
+        x, y, w, h = int(x), int(y), int(w), int(h)
+        if w <= 0 or h <= 0:
+            return False, f'cells[{i}] 尺寸非法: {w}×{h}'
+        if x < 0 or y < 0:
+            return False, f'cells[{i}] 坐标为负: ({x},{y})'
+        if x + w > cw or y + h > ch:
+            return False, f'cells[{i}] 越界: ({x},{y},{w},{h}) 超出 canvas ({cw}×{ch})'
+
+    return True, None
+
+
+def _log_stitch_error(data, error_msg):
+    """结构化日志：[STITCH_CELL_INVALID] + 脱敏上下文。"""
+    puzzle_type = data.get('puzzleType', '?')
+    aspect_ratio = data.get('aspectRatio', '?')
+    gutter_px = data.get('gutterPx', '?')
+    canvas = data.get('canvas', {})
+    cw = canvas.get('width', '?') if isinstance(canvas, dict) else '?'
+    ch = canvas.get('height', '?') if isinstance(canvas, dict) else '?'
+    images = data.get('images', [])
+    cells = data.get('cells', [])
+    digest = _make_request_digest(data)
+
+    log_line = (
+        f'{_STITCH_ERR_PREFIX} puzzleType={puzzle_type} aspectRatio={aspect_ratio} '
+        f'gutterPx={gutter_px} canvas={cw}×{ch} '
+        f'cells_len={len(cells) if isinstance(cells, list) else "?"} '
+        f'images_len={len(images) if isinstance(images, list) else "?"} '
+        f'error={error_msg} digest={digest}'
+    )
+    print(log_line, flush=True)
+
+
 @app.route('/api/process/stitch', methods=['POST'])
 def stitch_images():
     """
     图片拼接接口
-    支持动态尺寸拼接：根据传入的尺寸参数动态创建画布和拼接图片
-    如果未提供尺寸参数，使用默认值：左侧大图(800x800)，右上小图(400x400)，右下小图(400x400)
-    画布尺寸根据三个区域的尺寸动态计算
+    - Legacy: left/topRight/bottomRight + leftSize/topRightSize/bottomRightSize
+    - V2: puzzleType + aspectRatio + gutterPx + canvas + images + cells
+    自动分流：不含 V2 字段按 Legacy 处理，否则按 V2 严格校验。
     """
     try:
-        print(f"\n{'='*60}")
-        print(f"[Stitch] 收到图片拼接请求")
-        print(f"{'='*60}", flush=True)
-        
-        data = request.get_json()
+        data = request.get_json(silent=True) or {}
         if not data:
             return jsonify({"success": False, "error": "请求数据不能为空"}), 400
+
+        # ===== 分流 =====
+        if _is_legacy_p3_payload(data):
+            return _handle_legacy_p3_stitch(data)
+        else:
+            return _handle_v2_stitch(data)
+
+    except Exception as e:
+        import traceback
+        print(f"[Stitch-Legacy] 未预期异常: {e}", flush=True)
+        print(f"[Stitch-Legacy] {traceback.format_exc()}", flush=True)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+def _handle_legacy_p3_stitch(data):
+    """处理 Legacy 三拼请求（兼容旧协议）"""
+    try:
+        print(f"\n{'='*60}")
+        print(f"[Stitch-Legacy] 收到旧版三拼请求")
+        print(f"{'='*60}", flush=True)
         
         # 调试：输出完整的请求数据（用于排查问题）
-        print(f"[Stitch] 接收到的完整请求数据键: {list(data.keys())}", flush=True)
+        print(f"[Stitch-Legacy] 接收到的完整请求数据键: {list(data.keys())}", flush=True)
         if 'leftSize' in data:
-            print(f"[Stitch] ✅ leftSize 存在: {data['leftSize']}", flush=True)
+            print(f"[Stitch-Legacy] ✅ leftSize 存在: {data['leftSize']}", flush=True)
         else:
-            print(f"[Stitch] ⚠️ leftSize 不存在！", flush=True)
+            print(f"[Stitch-Legacy] ⚠️ leftSize 不存在！", flush=True)
         if 'topRightSize' in data:
-            print(f"[Stitch] ✅ topRightSize 存在: {data['topRightSize']}", flush=True)
+            print(f"[Stitch-Legacy] ✅ topRightSize 存在: {data['topRightSize']}", flush=True)
         else:
-            print(f"[Stitch] ⚠️ topRightSize 不存在！", flush=True)
+            print(f"[Stitch-Legacy] ⚠️ topRightSize 不存在！", flush=True)
         if 'bottomRightSize' in data:
-            print(f"[Stitch] ✅ bottomRightSize 存在: {data['bottomRightSize']}", flush=True)
+            print(f"[Stitch-Legacy] ✅ bottomRightSize 存在: {data['bottomRightSize']}", flush=True)
         else:
-            print(f"[Stitch] ⚠️ bottomRightSize 不存在！", flush=True)
+            print(f"[Stitch-Legacy] ⚠️ bottomRightSize 不存在！", flush=True)
         
         # 获取三个图片路径（相对路径，如 /temp/xxx.jpg）
         left_path = data.get('left')
@@ -1355,31 +1489,31 @@ def stitch_images():
         # 验证画布是否为正方形（允许1像素误差，因为可能存在舍入）
         size_diff = abs(canvas_width - canvas_height)
         if size_diff <= 1:
-            print(f"[Stitch] ✅ 画布尺寸验证通过: {canvas_width} × {canvas_height} (1:1正方形)", flush=True)
+            print(f"[Stitch-Legacy] ✅ 画布尺寸验证通过: {canvas_width} × {canvas_height} (1:1正方形)", flush=True)
         else:
             # 如果差异较大，记录警告（但不强制调整，因为前端已经调整好了尺寸）
             # 如果差异很大，可能说明前端调整逻辑有问题
-            print(f"[Stitch] ⚠️ 画布尺寸不是正方形: {canvas_width} × {canvas_height}", flush=True)
-            print(f"[Stitch] 差异: {size_diff} 像素 (前端应该已经调整为1:1，请检查前端逻辑)", flush=True)
+            print(f"[Stitch-Legacy] ⚠️ 画布尺寸不是正方形: {canvas_width} × {canvas_height}", flush=True)
+            print(f"[Stitch-Legacy] 差异: {size_diff} 像素 (前端应该已经调整为1:1，请检查前端逻辑)", flush=True)
         
-        print(f"[Stitch] 左侧图片: {left_path}")
-        print(f"[Stitch] 右上图片: {top_right_path}")
-        print(f"[Stitch] 右下图片: {bottom_right_path}")
+        print(f"[Stitch-Legacy] 左侧图片: {left_path}")
+        print(f"[Stitch-Legacy] 右上图片: {top_right_path}")
+        print(f"[Stitch-Legacy] 右下图片: {bottom_right_path}")
         
         # 详细输出接收到的尺寸参数（用于调试）
-        print(f"[Stitch] 接收到的尺寸参数（前端已调整为1:1）:")
+        print(f"[Stitch-Legacy] 接收到的尺寸参数（前端已调整为1:1）:")
         print(f"  - leftSize (原始): {data.get('leftSize', '未提供')}")
         print(f"  - topRightSize (原始): {data.get('topRightSize', '未提供')}")
         print(f"  - bottomRightSize (原始): {data.get('bottomRightSize', '未提供')}")
-        print(f"[Stitch] 解析后的尺寸配置:")
+        print(f"[Stitch-Legacy] 解析后的尺寸配置:")
         print(f"  - 左侧: {left_width} × {left_height} 像素")
         print(f"  - 右上: {top_right_width} × {top_right_height} 像素")
         print(f"  - 右下: {bottom_right_width} × {bottom_right_height} 像素")
-        print(f"[Stitch] 计算出的画布尺寸: {canvas_width} × {canvas_height} 像素 (1:1正方形)", flush=True)
+        print(f"[Stitch-Legacy] 计算出的画布尺寸: {canvas_width} × {canvas_height} 像素 (1:1正方形)", flush=True)
         
         # 获取用户 Session ID（用于用户隔离）
         session_id = get_user_session_id()
-        print(f"[Stitch] 用户 Session ID: {session_id}", flush=True)
+        print(f"[Stitch-Legacy] 用户 Session ID: {session_id}", flush=True)
         
         # 构建完整的图片路径（与 fetch-image 写入目录一致，见 STITCH_TEMP_BASE）
         api_gateway_temp_dir = os.path.join(STITCH_TEMP_BASE, session_id)
@@ -1441,29 +1575,29 @@ def stitch_images():
         top_right_file = get_file_path(top_right_path)
         bottom_right_file = get_file_path(bottom_right_path)
         
-        print(f"[Stitch] 完整路径 - 左侧: {left_file}")
-        print(f"[Stitch] 完整路径 - 右上: {top_right_file}")
-        print(f"[Stitch] 完整路径 - 右下: {bottom_right_file}", flush=True)
+        print(f"[Stitch-Legacy] 完整路径 - 左侧: {left_file}")
+        print(f"[Stitch-Legacy] 完整路径 - 右上: {top_right_file}")
+        print(f"[Stitch-Legacy] 完整路径 - 右下: {bottom_right_file}", flush=True)
         
         # 检查文件是否存在
-        print(f"[Stitch] 检查文件是否存在...", flush=True)
+        print(f"[Stitch-Legacy] 检查文件是否存在...", flush=True)
         if not os.path.exists(left_file):
-            print(f"[Stitch] ❌ 左侧图片不存在: {left_file}", flush=True)
+            print(f"[Stitch-Legacy] ❌ 左侧图片不存在: {left_file}", flush=True)
             # 列出目录中的文件，帮助调试
             if os.path.exists(api_gateway_temp_dir):
                 files = os.listdir(api_gateway_temp_dir)
-                print(f"[Stitch] 目录中的文件: {files[:10]}", flush=True)  # 只显示前10个
+                print(f"[Stitch-Legacy] 目录中的文件: {files[:10]}", flush=True)  # 只显示前10个
             return jsonify({"success": False, "error": f"左侧图片不存在: {left_path}"}), 404
         if not os.path.exists(top_right_file):
-            print(f"[Stitch] ❌ 右上图片不存在: {top_right_file}", flush=True)
+            print(f"[Stitch-Legacy] ❌ 右上图片不存在: {top_right_file}", flush=True)
             return jsonify({"success": False, "error": f"右上图片不存在: {top_right_path}"}), 404
         if not os.path.exists(bottom_right_file):
-            print(f"[Stitch] ❌ 右下图片不存在: {bottom_right_file}", flush=True)
+            print(f"[Stitch-Legacy] ❌ 右下图片不存在: {bottom_right_file}", flush=True)
             return jsonify({"success": False, "error": f"右下图片不存在: {bottom_right_path}"}), 404
-        print(f"[Stitch] ✅ 所有文件都存在", flush=True)
+        print(f"[Stitch-Legacy] ✅ 所有文件都存在", flush=True)
         
         # 打开图片
-        print(f"[Stitch] 正在打开图片...", flush=True)
+        print(f"[Stitch-Legacy] 正在打开图片...", flush=True)
         img_left = Image.open(left_file)
         img_top_right = Image.open(top_right_file)
         img_bottom_right = Image.open(bottom_right_file)
@@ -1471,20 +1605,20 @@ def stitch_images():
         # 使用 ImageOps.fit 进行裁剪（保持比例，从中心裁剪）
         # 这与前端的 object-fit: cover 效果一致
         # 使用动态尺寸进行裁剪
-        print(f"[Stitch] 正在裁剪图片...", flush=True)
+        print(f"[Stitch-Legacy] 正在裁剪图片...", flush=True)
         img_left_fit = ImageOps.fit(img_left, (left_width, left_height), centering=(0.5, 0.5))
         img_top_right_fit = ImageOps.fit(img_top_right, (top_right_width, top_right_height), centering=(0.5, 0.5))
         img_bottom_right_fit = ImageOps.fit(img_bottom_right, (bottom_right_width, bottom_right_height), centering=(0.5, 0.5))
         
         # 创建画布（使用动态计算的尺寸，白色背景）
-        print(f"[Stitch] 正在创建画布...", flush=True)
+        print(f"[Stitch-Legacy] 正在创建画布...", flush=True)
         canvas = Image.new('RGB', (canvas_width, canvas_height), (255, 255, 255))
         
         # 拼接图片（使用动态计算的粘贴位置）
         # 左侧大图：位置 (0, 0)
         # 右上小图：位置 (left_width, 0) - 在左侧图片的右侧
         # 右下小图：位置 (left_width, top_right_height) - 在右上图片的下方
-        print(f"[Stitch] 正在拼接图片...", flush=True)
+        print(f"[Stitch-Legacy] 正在拼接图片...", flush=True)
         canvas.paste(img_left_fit, (0, 0))
         canvas.paste(img_top_right_fit, (left_width, 0))
         canvas.paste(img_bottom_right_fit, (left_width, top_right_height))
@@ -1508,8 +1642,8 @@ def stitch_images():
         output_filename = f'stitched_{timestamp}.jpg'
         output_path = os.path.join(output_temp_dir, output_filename)
         
-        print(f"[Stitch] 正在保存图片: {output_path}", flush=True)
-        print(f"[Stitch] 输出目录: {output_temp_dir}", flush=True)
+        print(f"[Stitch-Legacy] 正在保存图片: {output_path}", flush=True)
+        print(f"[Stitch-Legacy] 输出目录: {output_temp_dir}", flush=True)
         canvas.save(output_path, 'JPEG', quality=95)
         
         # 构建返回的路径（相对路径，包含 Session ID，前端可以通过 /temp/{sessionId}/ 访问）
@@ -1518,7 +1652,7 @@ def stitch_images():
         local_path = f'/temp/{output_session_id}/{output_filename}'
         public_url = local_path
         
-        print(f"[Stitch] 拼接完成: {output_filename}", flush=True)
+        print(f"[Stitch-Legacy] 拼接完成: {output_filename}", flush=True)
         print(f"{'='*60}\n", flush=True)
         
         return jsonify({
@@ -1529,13 +1663,152 @@ def stitch_images():
         })
         
     except Exception as e:
-        print(f"[Stitch] 拼接失败: {e}", flush=True)
+        print(f"[Stitch-Legacy] 拼接失败: {e}", flush=True)
         import traceback
-        print(f"[Stitch] 异常详情:\n{traceback.format_exc()}", flush=True)
+        print(f"[Stitch-Legacy] 异常详情:\n{traceback.format_exc()}", flush=True)
         return jsonify({
             "success": False,
             "error": str(e)
         }), 500
+
+
+def _handle_v2_stitch(data):
+    """
+    V2 协议拼图：先校验 cells（含画布尺寸上限），校验通过后：
+      1. 创建白底 RGB 画布
+      2. 逐图 RGBA 叠白 → ImageOps.fit cover + 居中 → paste
+      3. 输出 JPEG quality=95
+    """
+    try:
+        puzzle_type = data.get('puzzleType', '?')
+        aspect_ratio = data.get('aspectRatio', '?')
+        gutter_px = data.get('gutterPx', '?')
+
+        print(f"\n{'='*60}")
+        print(f"[Stitch-V2] 收到 V2 拼图请求: puzzleType={puzzle_type} aspectRatio={aspect_ratio} gutterPx={gutter_px}")
+        print(f"{'='*60}", flush=True)
+
+        # ===== 画布上限硬兜底（防止运行态出现未命中 _validate_v2_cells 的异常分叉）=====
+        # 说明：理论上 _validate_v2_cells 已覆盖该校验；此处再做一次防御式校验，
+        # 保证任何路径都不会在超上限时继续走到图片读盘（避免 404 覆盖 400 语义）。
+        canvas_data = data.get('canvas')
+        if isinstance(canvas_data, dict):
+            cw_raw = canvas_data.get('width')
+            ch_raw = canvas_data.get('height')
+            if isinstance(cw_raw, (int, float)) and isinstance(ch_raw, (int, float)):
+                cw = int(cw_raw)
+                ch = int(ch_raw)
+                if cw > MAX_CANVAS_DIMENSION or ch > MAX_CANVAS_DIMENSION:
+                    err = f'canvas 尺寸超过上限 {MAX_CANVAS_DIMENSION}px: {cw}×{ch}'
+                    _log_stitch_error(data, err)
+                    return jsonify({
+                        "success": False,
+                        "error": f"{_STITCH_ERR_PREFIX} {err}"
+                    }), 400
+
+        # ===== 严格校验（不 Image.open） =====
+        ok, err = _validate_v2_cells(data)
+        if not ok:
+            _log_stitch_error(data, err)
+            return jsonify({
+                "success": False,
+                "error": f"{_STITCH_ERR_PREFIX} {err}"
+            }), 400
+
+        print(f"[Stitch-V2] ✅ 校验通过", flush=True)
+
+        # ===== 贴图 =====
+        canvas_data = data['canvas']
+        canvas_w = int(canvas_data['width'])
+        canvas_h = int(canvas_data['height'])
+        images = data['images']
+        cells = data['cells']
+
+        session_id = get_user_session_id()
+        print(f"[Stitch-V2] Session: {session_id}", flush=True)
+
+        # 创建白底画布
+        canvas = Image.new('RGB', (canvas_w, canvas_h), (255, 255, 255))
+
+        for idx, (img_rel_path, cell) in enumerate(zip(images, cells)):
+            cell_x = int(cell['x'])
+            cell_y = int(cell['y'])
+            cell_w = int(cell['w'])
+            cell_h = int(cell['h'])
+
+            # 解析完整文件路径（与 legacy 共用逻辑）
+            img_file = _resolve_image_path(img_rel_path, session_id)
+            print(f"[Stitch-V2] [{idx}] {img_rel_path} -> ({cell_x},{cell_y}) {cell_w}x{cell_h}", flush=True)
+
+            if not os.path.exists(img_file):
+                return jsonify({
+                    "success": False,
+                    "error": f"图片不存在: {_sanitize_path(img_rel_path)}"
+                }), 404
+
+            # RGBA 叠白：防透明 PNG 在 JPEG 产出灰边
+            img = Image.open(img_file)
+            img_rgba = img.convert('RGBA')
+
+            # 在与 cell 同尺寸的临时 RGBA 层上做 cover + 居中裁剪
+            temp_layer = Image.new('RGBA', (cell_w, cell_h), (255, 255, 255, 255))
+            fitted = ImageOps.fit(img_rgba, (cell_w, cell_h), centering=(0.5, 0.5))
+
+            # alpha_composite 到不透明白底
+            temp_layer = Image.alpha_composite(temp_layer, fitted)
+            # 转为 RGB 再 paste（丢弃 alpha 通道）
+            cell_img = temp_layer.convert('RGB')
+            canvas.paste(cell_img, (cell_x, cell_y))
+
+        # 保存 JPEG
+        output_session_id = session_id
+        output_temp_dir = os.path.join(STITCH_TEMP_BASE, output_session_id)
+        os.makedirs(output_temp_dir, exist_ok=True)
+
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]
+        output_filename = f'stitched_{timestamp}.jpg'
+        output_path = os.path.join(output_temp_dir, output_filename)
+
+        canvas.save(output_path, 'JPEG', quality=95)
+
+        local_path = f'/temp/{output_session_id}/{output_filename}'
+        print(f"[Stitch-V2] 拼接完成: {output_filename}", flush=True)
+        print(f"{'='*60}\n", flush=True)
+
+        return jsonify({
+            "success": True,
+            "imageUrl": local_path,
+            "localPath": local_path,
+            "filename": output_filename
+        })
+
+    except Exception as e:
+        import traceback
+        print(f"[Stitch-V2] 未预期异常: {e}", flush=True)
+        print(f"[Stitch-V2] {traceback.format_exc()}", flush=True)
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+def _resolve_image_path(img_rel_path, session_id):
+    """解析图片相对路径为完整文件路径（与 legacy handler 一致）"""
+    if img_rel_path.startswith('/temp/'):
+        relative = img_rel_path[6:]
+    elif img_rel_path.startswith('temp/'):
+        relative = img_rel_path[5:]
+    else:
+        relative = img_rel_path
+
+    if '/' in relative:
+        parts = relative.split('/')
+        path_session_id = parts[0]
+        filename = parts[-1]
+        file_session_dir = os.path.join(STITCH_TEMP_BASE, path_session_id)
+        return os.path.join(file_session_dir, filename)
+    else:
+        filename = relative
+        api_gateway_temp_dir = os.path.join(STITCH_TEMP_BASE, session_id)
+        return os.path.join(api_gateway_temp_dir, filename)
+
 
 @app.route('/api/generate', methods=['POST'])
 def generate_videos():

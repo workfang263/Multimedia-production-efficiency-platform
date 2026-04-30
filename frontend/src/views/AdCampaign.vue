@@ -13,10 +13,29 @@
             @change="handleModeChange"
           >
             <el-radio-button label="standard">标准模式</el-radio-button>
-            <el-radio-button label="stitch_sync">拼图对齐模式 (3:1)</el-radio-button>
+            <el-radio-button label="stitch_sync">拼图对齐模式 ({{ stitchN }}:1)</el-radio-button>
           </el-radio-group>
+          <!-- 拼图比例选择（仅 stitch_sync 模式） -->
+          <el-select 
+            v-if="adCampaignStore.workflowMode === 'stitch_sync'"
+            v-model="adCampaignStore.stitchRatio"
+            size="small"
+            style="width: 100px; margin-left: 8px;"
+            @change="onStitchRatioChange"
+          >
+            <el-option label="3:1" value="3:1" />
+            <el-option label="4:1" value="4:1" />
+            <el-option label="5:1" value="5:1" />
+            <el-option label="6:1" value="6:1" />
+          </el-select>
+          <small
+            v-if="adCampaignStore.workflowMode === 'stitch_sync'"
+            style="color: #909399; font-size: 12px;"
+          >
+            当前拼图对齐按 {{ stitchN }}:1 校验与分组；轮播模式始终按 3:1。
+          </small>
           <el-tooltip 
-            content="标准模式：自由填写，1:1生成表格。拼图对齐模式：Excel导入+外链同步，3:1强校验" 
+            :content="`标准模式：自由填写，1:1生成表格。拼图对齐模式：Excel导入+外链同步，${stitchN}:1强校验`" 
             placement="top"
           >
             <el-icon style="cursor: help; color: #909399;"><QuestionFilled /></el-icon>
@@ -158,7 +177,7 @@
                   'item-has-difference': group.hasDifference
                 }"
               >
-                <!-- 组头部：显示外链序号和匹配状态（如：2/3） -->
+                <!-- 组头部：显示外链序号和匹配状态（如：2/N） -->
                 <div class="item-header">
                   <div class="item-header-left">
                     <span class="item-index">外链 {{ index + 1 }}</span>
@@ -186,7 +205,7 @@
                       size="small" 
                       :type="group.complete ? 'success' : (group.matched > 0 || group.modified > 0) ? 'warning' : 'danger'"
                     >
-                      {{ group.matched }}/3
+                      {{ group.matched }}/{{ group.expectedCount || stitchN }}
                     </el-tag>
                   </div>
                 </div>
@@ -196,9 +215,9 @@
                   {{ group.formLink }}
                 </div>
                 
-                <!-- 商品信息预览：显示3个商品的位置 -->
+                <!-- 商品信息预览：显示当前 N 个商品的位置 -->
                 <div class="products-preview">
-                  <!-- 遍历3个商品位置 -->
+                  <!-- 遍历当前 N 个商品位置 -->
                   <div 
                     v-for="(product, pIndex) in group.products" 
                     :key="pIndex"
@@ -468,6 +487,15 @@ import { normalizeUrl } from '@/utils/urlNormalize'
 
 // 使用全局状态管理
 const adCampaignStore = useAdCampaignStore()
+
+// 拼图比例 N（从 store 解析）
+const stitchN = computed(() => adCampaignStore.getStitchN())
+
+// 拼图比例变更时的轻量刷新（不触发 generateAllTables）
+function onStitchRatioChange() {
+  // 仅刷新对齐状态，不自动生成表格
+  adCampaignStore.checkAlignmentStatus()
+}
 
 // 响应式数据
 const generating = adCampaignStore.generating
@@ -935,11 +963,11 @@ const formatDataForBackend = (data) => {
   return formattedData
 }
 
-// 按3个一组分组（轮播模式）
-const groupByThree = (items) => {
+// 按 N 个一组分组
+const groupByN = (items, n) => {
   const groups = []
-  for (let i = 0; i < items.length; i += 3) {
-    groups.push(items.slice(i, i + 3))
+  for (let i = 0; i < items.length; i += n) {
+    groups.push(items.slice(i, i + n))
   }
   return groups
 }
@@ -983,26 +1011,27 @@ const processBatchInput = (formData) => {
   // ========== 阶段七：表格生成改造 - 根据工作流模式判断分组逻辑 ==========
   /**
    * 分组逻辑判断优先级：
-   * 1. 拼图对齐模式（workflowMode === 'stitch_sync'）→ 使用3:1分组
+   * 1. 拼图对齐模式（workflowMode === 'stitch_sync'）→ 使用 N:1 分组（N 由 stitchRatio 决定）
    * 2. 标准模式 + 轮播视频模式（formData['轮播视频模式'] === true）→ 使用3:1分组（保留原有功能）
    * 3. 标准模式 → 使用1:1逻辑（原有逻辑）
    * 
    * 技术原理：
-   * - 拼图对齐模式的核心是3:1关系（每3个商品对应1个外链）
-   * - 轮播视频模式也是3:1关系，所以在标准模式下保留此功能
+   * - 拼图对齐模式的核心是 N:1 关系（每 N 个商品对应1个外链）
+   * - 轮播视频模式保持3:1关系，所以在标准模式下保留此功能
    * - 标准模式的默认逻辑是1:1对应（每个商品独立一行）
    */
   
-  // 判断是否需要使用3:1分组逻辑
+  // 判断是否需要使用分组逻辑（拼图对齐模式 或 轮播视频模式）
   const isStitchSyncMode = adCampaignStore.workflowMode === 'stitch_sync'
   const rotationMode = formData['轮播视频模式'] || false
-  const shouldUseThreeToOneGrouping = isStitchSyncMode || rotationMode
+  const shouldUseGroupedMode = isStitchSyncMode || rotationMode
   
-  // 3:1分组处理（拼图对齐模式 或 轮播视频模式）
-  if (shouldUseThreeToOneGrouping) {
+  if (shouldUseGroupedMode) {
+    const groupSize = isStitchSyncMode ? adCampaignStore.getStitchN() : 3
+
     // 根据模式类型输出不同的日志
     if (isStitchSyncMode) {
-      console.log('🔗 [拼图对齐模式] 启用3:1分组处理（每3个商品ID/SPU对应1个外链）')
+      console.log(`🔗 [拼图对齐模式] 启用 ${groupSize}:1 分组处理（每${groupSize}个商品ID/SPU对应1个外链）`)
     } else {
       console.log('🔄 [轮播模式] 启用轮播视频模式，按3个一组分组处理')
     }
@@ -1014,16 +1043,12 @@ const processBatchInput = (formData) => {
       alert(warningMsg)
     }
     
-    /**
-     * 按3个一组分组
-     * 使用 groupByThree 函数将数组按每3个元素一组进行分组
-     * 例如：[1,2,3,4,5,6] → [[1,2,3], [4,5,6]]
-     */
-    const idGroups = groupByThree(productIds)
-    const spuGroups = groupByThree(productSpus)
+    // 按 groupSize 分组（拼图对齐模式取 N，轮播模式固定取 3）
+    const idGroups = groupByN(productIds, groupSize)
+    const spuGroups = groupByN(productSpus, groupSize)
     const groupCount = Math.max(idGroups.length, spuGroups.length)
     
-    const modePrefix = isStitchSyncMode ? '[拼图对齐模式]' : '[轮播模式]'
+    const modePrefix = isStitchSyncMode ? `[拼图对齐模式 ${groupSize}:1]` : '[轮播模式 3:1]'
     console.log(`${modePrefix} 商品ID分组: ${idGroups.length}组`, idGroups)
     console.log(`${modePrefix} 商品SPU分组: ${spuGroups.length}组`, spuGroups)
     console.log(`${modePrefix} 分组数量: ${groupCount}`)
@@ -1037,7 +1062,7 @@ const processBatchInput = (formData) => {
     
     const batchData = []
     // 生成分组后的批量数据
-    // 每个分组包含：3个商品ID（用逗号连接）、3个商品SPU（用逗号连接）、1个外链
+    // 每个分组包含：groupSize个商品ID（用逗号连接）、groupSize个商品SPU（用逗号连接）、1个外链
     for (let i = 0; i < groupCount; i++) {
       const batchItem = { ...formData }
       
@@ -1932,7 +1957,7 @@ const generateAllTables = async () => {
     /**
      * 校验原理：
      * 1. 所有模式都需要校验：商品ID和商品SPU的行数必须一致
-     * 2. 拼图对齐模式额外校验：必须满足3:1关系（每3个商品对应1个外链）
+    * 2. 拼图对齐模式额外校验：必须满足 N:1 关系（N 由 stitchRatio 决定）
      * 3. 校验失败时阻止生成，避免产生错误数据
      */
     
@@ -1944,13 +1969,13 @@ const generateAllTables = async () => {
       return
     }
     
-    // 2. 三倍数强校验（仅拼图对齐模式）
-    // 在拼图对齐模式下，必须确保数据满足3:1关系
-    // 即：商品ID数量 = 外链数量 × 3
+    // 2. N 倍数强校验（仅拼图对齐模式）
+    // 在拼图对齐模式下，必须确保数据满足 N:1 关系
+    // 即：商品ID数量 = 外链数量 × N
     if (adCampaignStore.workflowMode === 'stitch_sync') {
-      if (!adCampaignStore.validateStrictThree()) {
+      if (!adCampaignStore.validateStrictStitch()) {
         // 校验失败，直接返回，不继续执行生成逻辑
-        // validateStrictThree 内部已经显示了错误提示（ElMessageBox）
+        // validateStrictStitch 内部已经显示了错误提示（ElMessageBox）
         return
       }
     }
@@ -2226,13 +2251,15 @@ const handleAlignData = () => {
     ElMessage.warning('请先同步外链或输入商品图片链接')
     return
   }
+
+  const currentN = stitchN.value
   
   // ========== 步骤2：解析表单中的商品ID和SPU（位置敏感型解析） ==========
   /**
    * 核心优化：补齐数组长度，确保不因用户删除行而产生索引偏移
    * 
    * 技术原理：
-   * 1. 先计算预期的商品数量（外链数量 × 3）
+   * 1. 先计算预期的商品数量（外链数量 × N）
    * 2. 解析表单数据，补齐到预期长度
    * 3. 这样无论用户如何删除，数组长度都是固定的，索引计算永远正确
    * 
@@ -2241,7 +2268,7 @@ const handleAlignData = () => {
    * - 如果依赖原始数组长度，删除中间的行会导致后续索引错乱
    * - 补齐到预期长度后，使用位置索引（startIndex + i）就永远不会出错
    */
-  const expectedProductCount = formLinks.length * 3
+  const expectedProductCount = formLinks.length * currentN
   
   /**
    * 位置敏感型解析函数
@@ -2279,7 +2306,7 @@ const handleAlignData = () => {
     const { externalLink, productInfo } = linkRecord
     const normalizedLink = normalizeUrl(externalLink)
     
-    if (productInfo && productInfo.length === 3) {
+    if (productInfo && productInfo.length === currentN) {
       linkToProductInfoMap.set(normalizedLink, productInfo)
     }
   })
@@ -2311,11 +2338,11 @@ const handleAlignData = () => {
     })
     
     // 计算这组数据在表单中的起始位置
-    const startIndex = groupIndex * 3
+    const startIndex = groupIndex * currentN
     
-    if (productInfo && productInfo.length === 3) {
+    if (productInfo && productInfo.length === currentN) {
       // Store 中有这个外链的记录
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < currentN; i++) {
         const pos = startIndex + i  // 使用位置索引，而不是 slice
         
         // 从补齐后的数组中获取对应位置的数据
@@ -2364,7 +2391,7 @@ const handleAlignData = () => {
     } else {
       // Store 中没有这个外链的记录（用户手动添加的）
       // 保留用户输入的数据
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < currentN; i++) {
         const pos = startIndex + i
         alignedIds.push(currentIds[pos] || '')
         alignedSpus.push(currentSpus[pos] || '')
@@ -2600,18 +2627,20 @@ const alignmentStatus = computed(() => {
       formLinksNotInMapping: []
     }
   }
+
+  const currentN = stitchN.value
   
   // ========== 步骤2：解析表单中的商品ID和SPU（位置敏感型解析） ==========
   /**
    * 核心优化：补齐数组长度，不过滤空值，保持位置对应关系
    * 
    * 技术要点：
-   * 1. 计算预期的商品数量（外链数量 × 3）
+   * 1. 计算预期的商品数量（外链数量 × N）
    * 2. 解析表单数据，补齐到预期长度
    * 3. 不过滤空值，保留空行（空行表示缺失）
    * 4. 这样位置索引计算永远正确，不会因为用户删除行而错乱
    */
-  const expectedProductCount = formLinks.length * 3
+  const expectedProductCount = formLinks.length * currentN
   
   /**
    * 位置敏感型解析函数（与 handleAlignData 保持一致）
@@ -2658,7 +2687,7 @@ const alignmentStatus = computed(() => {
     const normalizedLink = normalizeUrl(externalLink)
     
     // 如果外链有商品信息，存储到映射表中
-    if (productInfo && productInfo.length === 3) {
+    if (productInfo && productInfo.length === currentN) {
       linkToProductInfoMap.set(normalizedLink, productInfo)
     }
   })
@@ -2685,12 +2714,12 @@ const alignmentStatus = computed(() => {
       
       // 即使不在映射表中，也要显示在预览表中
       // 计算这组数据在表单中的起始位置
-      const startIndex = groupIndex * 3
+      const startIndex = groupIndex * currentN
       
       // 构建商品信息（没有 Store 数据，只能显示表单数据）
       // 使用位置索引获取，而不是 slice
       const products = []
-      for (let i = 0; i < 3; i++) {
+      for (let i = 0; i < currentN; i++) {
         const pos = startIndex + i  // 使用位置索引
         
         // 从补齐后的数组中获取对应位置的数据
@@ -2712,6 +2741,9 @@ const alignmentStatus = computed(() => {
         linkMatched: false,  // 外链不在映射表中
         products,
         matched: 0,  // 无法匹配（没有 Store 数据）
+        missing: products.filter(product => product.status === 'missing').length,
+        modified: 0,
+        expectedCount: currentN,
         complete: false,
         hasDifference: true  // 有差异（不在映射表中）
       })
@@ -2722,12 +2754,12 @@ const alignmentStatus = computed(() => {
     // ========== 步骤6：检测商品信息的状态（位置敏感型） ==========
     /**
      * 核心逻辑（优化版）：
-     * 1. 计算这组数据在表单中的起始位置（每个外链对应3个商品）
+     * 1. 计算这组数据在表单中的起始位置（每个外链对应 N 个商品）
      * 2. 使用位置索引（startIndex + i）获取对应的商品数据
      * 3. 同时检查 ID 和 SPU，检测状态
      * 4. 对比 Store 中的商品信息，检测状态
      */
-    const startIndex = groupIndex * 3
+    const startIndex = groupIndex * currentN
     
     // 构建商品信息数组，检测每个商品的状态
     const products = []
@@ -2735,7 +2767,7 @@ const alignmentStatus = computed(() => {
     let missingCount = 0
     let modifiedCount = 0
     
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < currentN; i++) {
       const pos = startIndex + i  // 使用位置索引，而不是 slice
       
       // 从补齐后的数组中获取对应位置的数据
@@ -2775,8 +2807,8 @@ const alignmentStatus = computed(() => {
     // 检测外链是否匹配
     const linkMatched = true  // 外链在映射表中，视为匹配
     
-    // 判断这组是否完整（3个商品都匹配）
-    const complete = matchedCount === 3 && linkMatched
+    // 判断这组是否完整（N个商品都匹配）
+    const complete = matchedCount === currentN && linkMatched
     
     groups.push({
       externalLink: formLink,  // Store 中的外链（用于显示）
@@ -2786,6 +2818,7 @@ const alignmentStatus = computed(() => {
       matched: matchedCount,
       missing: missingCount,
       modified: modifiedCount,
+      expectedCount: currentN,
       complete,
       hasDifference: missingCount > 0 || modifiedCount > 0  // 是否有差异
     })
@@ -3688,19 +3721,19 @@ onMounted(async () => {
 
 /**
  * 商品信息预览容器
- * 使用 flex 横向布局，3个商品并排显示
+ * 使用自适应网格布局，兼容 3/4/5/6 个商品并排显示
  */
 .products-preview {
-  display: flex;
+  display: grid;
   gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
 }
 
 /**
  * 商品信息框
- * 每个商品占 1/3 宽度，居中显示
+ * 每个商品占用一个网格单元，自动随 N 变化
  */
 .product-box {
-  flex: 1;
   padding: 8px;
   border-radius: 4px;
   text-align: center;
